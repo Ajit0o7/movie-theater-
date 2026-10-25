@@ -6,8 +6,8 @@ A zero-install watch-party web app, inspired by [Kosmi](https://app.kosmi.io/) b
 - **Two-way control**: anyone in the room can play, pause or seek, and the change applies for everyone, with a toast saying who did it.
 - **Draggable webcams**: drag a camera anywhere (60fps `translate3d`), switch it between S, M and L, or shrink it to a badge. The tile of whoever is speaking glows. Each viewer's layout is remembered.
 - **YouTube**: paste any YouTube link (`watch`, `youtu.be`, `shorts`, `live`, with `?t=` start times). Everyone plays it in sync through the official embedded player.
-- **Streaming up to 4K**: screen/tab capture and file streaming have three quality presets: **Smooth** 1080p60 at 8 Mbps (the default), **Sharp** 1440p60 at 12 Mbps and **Max** 4K60 at 20 Mbps. H.264 is preferred so hardware encoders do the work, and viewers keep a 400 ms playout buffer to absorb network jitter.
-- **Separate audio paths**: movie audio is sent as Opus stereo at 510 kbps with echo cancellation, noise suppression and AGC turned **off**. Voice uses its own track with all of those **on**. The mixer has separate Movie and Voice volume sliders.
+- **Sharp on slow internet**: screen/tab capture and file streaming have quality presets: **Eco** 1080p at 2.5 Mbps (the default, works on 2–5 Mbps), **Cinema** 1440p at 5 Mbps, **Max** 4K at 10 Mbps, and **Smooth** 1080p60 for sports and games. The cinema presets never drop resolution. The most efficient codec the device can encode smoothly is chosen automatically (AV1 > VP9 > H.264). Viewers keep an 800 ms buffer that absorbs network hiccups, and movie audio is Opus stereo at 160 kbps.
+- **Separate audio paths**: movie audio is sent as Opus stereo at 160 kbps with echo cancellation, noise suppression and AGC turned **off**. Voice uses its own track with all of those **on**. The mixer has separate Movie and Voice volume sliders.
 - **Translucent chat drawer**: it slides over the movie instead of shrinking it, and messages that arrive while it's closed show up as toasts.
 - **Floating reactions**: 🍿 ❤️ 😂 👏 😱 🔥 😭 👀 drift up the screen for everyone.
 - **Ambilight**: the letterbox bars glow with colours sampled from the edges of the picture.
@@ -30,8 +30,8 @@ Open the page, enter your name and click **Start a theater**, then send the invi
 | **Video link** | Everyone's player loads the same direct `.mp4`/`.webm` URL | Whatever the file is, true 4K included. Nothing is re-encoded | Everyone |
 | **YouTube link** | Everyone embeds the same video with YouTube's player. Its controls are hidden so the room HUD is the only remote | YouTube picks the resolution per viewer, up to 4K on large screens | Everyone |
 | **Same file everywhere** | Everyone opens their own copy of the same file. Only play/pause/seek messages are sent | Full original quality, no video over the network | Everyone |
-| **Stream a file** | The host's `<video>` is captured (`captureStream()`) and sent over WebRTC | Quality preset: 1080p60 up to 4K60 | Everyone (guests' clicks drive the host's player) |
-| **Share screen / tab** | `getDisplayMedia` at the preset's size and 60fps, with stereo tab audio | Quality preset: 1080p60 up to 4K60 | Live, so there's no seeking |
+| **Stream a file** | The host's `<video>` is captured (`captureStream()`) and sent over WebRTC | Quality preset (Eco 1080p up to Max 4K) | Everyone (guests' clicks drive the host's player) |
+| **Share screen / tab** | `getDisplayMedia` at the preset's size, with stereo tab audio | Quality preset (Eco 1080p up to Max 4K) | Live, so there's no seeking |
 
 Tips:
 - When sharing, choose a **browser tab** and tick **Share tab audio**. That gives the cleanest audio.
@@ -39,11 +39,26 @@ Tips:
 - For the best 4K experience, use **Video link** or **Same file everywhere**. They don't depend on the host's upload speed.
 - YouTube videos whose owner has disabled embedding can't be played, and YouTube may show ads to each viewer separately. The room re-syncs everyone once an ad ends.
 
+### Picking a quality preset
+
+| Preset | Resolution | Bitrate cap (per viewer) | Use when |
+| --- | --- | --- | --- |
+| **Eco** (default) | 1080p, film frame rate | 2.5 Mbps | Upload is around 2–5 Mbps |
+| **Cinema** | 1440p, film frame rate | 5 Mbps | Good connection |
+| **Max** | 4K, film frame rate | 10 Mbps | Fast connection and a hardware encoder |
+| **Smooth** | 1080p at 60fps | 8 Mbps | Sports, games, other true 60fps content |
+
+The host uploads one copy per viewer, so with two friends, Eco needs about 5 Mbps of upload. Press **I** while sharing to see the *Upload estimate*, the codec, and whether the encoder is hardware or software. It also suggests Eco when the connection is below the current preset.
+
+**How the cinema presets stay sharp.** They cap capture at 30fps. Film is 24fps, and tab capture only sends a frame when the picture changes, so every real movie frame still gets through and each one gets the whole bit budget. They also use `maintain-resolution`: when bandwidth dips, WebRTC compresses a little harder instead of falling back to a blurry 360p. The video track is still hinted as `motion`. A `detail` hint would switch Chrome's encoder into screencast mode, which is built for slides and gets choppy on film.
+
+**Codec choice.** The browser is asked (`mediaCapabilities`) what it can encode. A hardware AV1, VP9 or H.264 encoder always wins, most efficient first. Without one, Eco uses software AV1 (about 50% fewer bits than H.264 for the same picture), while the heavier presets use H.264 so the CPU keeps up. The codec is pinned on the sender, AV1/VP9 get L1T2 temporal layers for loss resilience, and switching presets mid-share re-picks the codec without interrupting it.
+
 ### If a share or stream stutters
 
-1. Pick **Smooth** in *Streaming quality* (bottom of the "What are we watching?" dialog). It can be changed during a share.
-2. Press **I** to open stats. *Encoder* shows whether a hardware encoder is used. If it says *(software)*, enable hardware acceleration in the browser settings. *Dropped / freezes* on a viewer's side points to their network or decoder.
-3. Every extra viewer is another full encode and upload on the host. With 3 or more viewers, use Smooth, or have everyone use *Video link* or *Same file everywhere*.
+1. Pick **Eco**. It can be changed during a share.
+2. Press **I**. *Encoder … (software)* together with a heavy preset means the CPU can't keep up: use Eco, or enable hardware acceleration in the browser settings. *Dropped / freezes* rising on a viewer points to their network or decoder.
+3. With 3 or more viewers, stay on Eco, or have everyone use *Video link* or *Same file everywhere*, which send no video from the host.
 
 ## Keyboard shortcuts
 
@@ -74,6 +89,7 @@ public/
   js/cameras.js    Draggable camera tiles, speaking detection
   js/chat.js       Slide-over chat & people list
   js/reactions.js  Floating emoji particles
+  js/codecs.js     Picks AV1/VP9/H.264 from what the device encodes smoothly (unit-tested policy)
   js/youtube.js    YouTube link parsing + IFrame API adapter that looks like a <video> to sync
   js/ambilight.js  Glow from a tiny stretched canvas (no pixel readback, no blur filter)
   js/media.js      Capture constraints (4K display, voice vs. movie audio)
@@ -96,7 +112,7 @@ public/
 
 Any Node 18+ host with WebSocket support works (Render, Fly.io, Railway, a VPS behind Caddy or nginx). Serve it over HTTPS. For friends on mobile networks or corporate Wi-Fi, also run a TURN server (for example coturn) and set the `TURN_*` variables, otherwise some peers won't be able to connect.
 
-**Bandwidth:** "Stream a file" and "Share screen" send one copy per viewer from the host, so 3 viewers at 20 Mbps need about 60 Mbps of upload. The browser's congestion control backs off automatically when the link can't keep up.
+**Bandwidth:** "Stream a file" and "Share screen" send one copy per viewer from the host, so 3 viewers on Eco (2.5 Mbps) need about 7.5 Mbps of upload, or 30 Mbps on Max. The browser's congestion control backs off automatically when the link can't keep up.
 
 ## Development
 

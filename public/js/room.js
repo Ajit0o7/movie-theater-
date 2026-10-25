@@ -845,6 +845,12 @@ async function updateStats() {
       const first = stats.outbound[0];
       if (first.codec) lines.push(['Codec', first.codec]);
       if (first.encoder) lines.push(['Encoder', `${first.encoder}${first.powerEfficient ? ' (hardware)' : ' (software)'}`]);
+      const uploads = stats.outbound.map((o) => o.availableBps).filter(Boolean);
+      if (uploads.length) {
+        const worst = Math.min(...uploads) / 1e6;
+        lines.push(['Upload estimate', `${worst.toFixed(1)} Mbps per viewer`]);
+        if (worst * 1e6 < currentPreset().bitrate * 0.8) lines.push(['Tip', 'Connection is below this preset; try Eco']);
+      }
       lines.push(['Quality preset', `${currentPreset().label} · ${currentPreset().detail}`]);
       label = `${resolutionLabel(first.frameHeight)} · ↑${total.toFixed(1)} Mbps`;
     }
@@ -928,9 +934,10 @@ shield.addEventListener('dblclick', () => {
 function renderQualityPicker() {
   $('#quality-picker').replaceChildren(
     ...Object.entries(STREAM_PRESETS).map(([id, p]) =>
-      h('button', { type: 'button', role: 'radio', 'aria-checked': String(id === settings.quality), 'data-preset': id }, [
+      h('button', { type: 'button', role: 'radio', 'aria-checked': String(id === settings.quality), 'data-preset': id, title: p.note }, [
         p.label,
         h('small', { text: p.detail }),
+        h('small', { text: p.note }),
       ]),
     ),
   );

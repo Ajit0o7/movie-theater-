@@ -5,11 +5,14 @@
 // renegotiation) when cameras toggle or the movie source changes:
 //
 //   camVideo + micAudio      -> "camera" MediaStream (voice: echo-cancelled)
-//   movieVideo + movieAudio  -> "movie" MediaStream (up to 4K / 20 Mbps, unfiltered stereo)
+//   movieVideo + movieAudio  -> "movie" MediaStream (preset-driven up to 4K, unfiltered stereo)
 
+import { SAFE_DEFAULT_ORDER, movieCodecOrder } from './codecs.js';
 import { DEFAULT_PRESET, STREAM_PRESETS } from './media.js';
 
-export const MOVIE_AUDIO_BITRATE = 510_000;
+// Opus is transparent for stereo film audio at ~160 kbps; anything above that is taken
+// straight from the video's share of a slow connection.
+export const MOVIE_AUDIO_BITRATE = 160_000;
 export const CAMERA_VIDEO_BITRATE = 1_200_000;
 export const VOICE_AUDIO_BITRATE = 64_000;
 
@@ -43,68 +46,101 @@ export function enableOpusStereo(sdp) {
 
 /**
  * Movie receivers get a deliberate playout buffer. WebRTC defaults to call-style minimal
- * latency, which turns any network jitter into visible stutter; a movie can afford ~0.4s.
+ * latency, which turns any network hiccup into a freeze; a movie can easily afford 0.8s.
  */
-export const MOVIE_JITTER_BUFFER_MS = 400;
+export const MOVIE_JITTER_BUFFER_MS = 800;
 
-/** Lifts the browser's default (~2.5 Mbps) sender cap. Safe to call repeatedly. */
-export async function applySenderParams(sender, slot, preset = STREAM_PRESETS[DEFAULT_PRESET]) {
-  if (!sender?.track) return;
-  try {
-    const params = sender.getParameters();
-    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-    const enc = params.encodings[0];
-    if (slot === 'movieVideo') {
-      // A captured 4K file is scaled down to the preset; screen capture is already sized.
-      const height = sender.track.getSettings?.().height;
-      enc.scaleResolutionDownBy = height && height > preset.height ? height / preset.height : 1;
-      enc.maxBitrate = preset.bitrate;
-      enc.maxFramerate = preset.fps;
-      enc.priority = 'high';
-      enc.networkPriority = 'high';
-      params.degradationPreference = preset.degradation;
-    } else if (slot === 'movieAudio') {
-      enc.maxBitrate = MOVIE_AUDIO_BITRATE;
-      enc.priority = 'high';
-      enc.networkPriority = 'high';
-    } else if (slot === 'camVideo') {
-      enc.maxBitrate = CAMERA_VIDEO_BITRATE;
-      enc.priority = 'low';
-    } else if (slot === 'micAudio') {
-      enc.maxBitrate = VOICE_AUDIO_BITRATE;
-      enc.priority = 'high';
-    }
-    await sender.setParameters(params);
-  } catch (err) {
-    // Some browsers reject a subset of fields (e.g. degradationPreference). Retry with the essentials.
-    try {
-      const params = sender.getParameters();
-      if (!params.encodings?.length) return;
-      if (slot === 'movieVideo') params.encodings[0].maxBitrate = preset.bitrate;
-      if (slot === 'movieAudio') params.encodings[0].maxBitrate = MOVIE_AUDIO_BITRATE;
-      await sender.setParameters(params);
-    } catch {
-      console.warn('[rtc] setParameters failed', slot, err);
-    }
-  }
+/** Temporal SVC: frames lost from the enhancement layer don't break the base layer's chain. */
+const SVC_CODECS = ['video/av1', 'video/vp9'];
+const SVC_MODE = 'L1T2';
+
+/** Chrome accepts L1T2 but leaves `scalabilityModes` empty in its capabilities; only a
+ *  browser that lists modes can rule one out. Rejection is handled by the fallback chain. */
+function mayScale(mime, mode) {
+  const caps = (globalThis.RTCRtpSender?.getCapabilities?.('video')?.codecs ?? []).filter((c) => c.mimeType.toLowerCase() === mime);
+  const listed = caps.flatMap((c) => c.scalabilityModes ?? []);
+  return listed.length === 0 || listed.includes(mode);
 }
 
+// getParameters()/setParameters() is a transaction: two overlapping calls on one sender make
+// the second fail. Calls are queued per sender so they never overlap.
+const senderQueues = new WeakMap();
+
 /**
- * Prefers H.264 for the movie track: nearly every GPU (NVIDIA, Intel, AMD, Apple) encodes
- * it in hardware, so 1080p–4K at 60fps doesn't saturate the CPU and drop frames. VP9 is
- * the fallback; its encoder is usually software-only.
+ * Lifts the browser's default (~2.5 Mbps) sender cap and applies the movie preset. Safe to
+ * call repeatedly. Newer fields (codec, scalabilityMode) are tried first and dropped one
+ * layer at a time if the browser rejects them, so the essentials always land.
  */
-function preferMovieCodecs(transceiver) {
+export function applySenderParams(sender, slot, preset = STREAM_PRESETS[DEFAULT_PRESET], codecOrder = SAFE_DEFAULT_ORDER) {
+  if (!sender) return Promise.resolve();
+  const next = (senderQueues.get(sender) ?? Promise.resolve()).then(() => setSenderParams(sender, slot, preset, codecOrder));
+  senderQueues.set(sender, next);
+  return next;
+}
+
+async function setSenderParams(sender, slot, preset, codecOrder) {
+  if (!sender.track) return;
+  const variants = slot === 'movieVideo' ? ['full', 'codec', 'no-codec', 'minimal'] : ['full', 'minimal'];
+  let lastErr;
+  for (const variant of variants) {
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+      const enc = params.encodings[0];
+      if (slot === 'movieVideo') {
+        enc.maxBitrate = preset.bitrate;
+        if (variant !== 'minimal') {
+          // A captured 4K file is scaled down to the preset; screen capture is already sized.
+          const height = sender.track.getSettings?.().height;
+          enc.scaleResolutionDownBy = height && height > preset.height ? height / preset.height : 1;
+          enc.maxFramerate = preset.fps;
+          enc.priority = 'high';
+          enc.networkPriority = 'high';
+          params.degradationPreference = preset.degradation;
+        }
+        if (variant === 'full' || variant === 'codec') {
+          // Pin the codec on the sender itself, so it survives renegotiations started by the
+          // other side (whose offers list codecs in their default order).
+          const codec = codecOrder
+            .map((mime) => params.codecs?.find((c) => c.mimeType.toLowerCase() === mime.toLowerCase()))
+            .find(Boolean);
+          if (codec) {
+            enc.codec = codec;
+            const mime = codec.mimeType.toLowerCase();
+            if (variant === 'full' && SVC_CODECS.includes(mime) && mayScale(mime, SVC_MODE)) enc.scalabilityMode = SVC_MODE;
+            else delete enc.scalabilityMode;
+          }
+        }
+      } else if (slot === 'movieAudio') {
+        enc.maxBitrate = MOVIE_AUDIO_BITRATE;
+        if (variant !== 'minimal') {
+          enc.priority = 'high';
+          enc.networkPriority = 'high';
+        }
+      } else if (slot === 'camVideo') {
+        enc.maxBitrate = CAMERA_VIDEO_BITRATE;
+        if (variant !== 'minimal') enc.priority = 'low';
+      } else if (slot === 'micAudio') {
+        enc.maxBitrate = VOICE_AUDIO_BITRATE;
+        if (variant !== 'minimal') enc.priority = 'high';
+      }
+      await sender.setParameters(params);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  console.warn('[rtc] setParameters failed', slot, lastErr);
+}
+
+/** Orders the movie transceiver's codecs for negotiation (most preferred first). */
+function preferMovieCodecs(transceiver, order) {
   if (!transceiver?.setCodecPreferences || !window.RTCRtpReceiver?.getCapabilities) return;
   const caps = RTCRtpReceiver.getCapabilities('video');
   if (!caps) return;
   const rank = (c) => {
-    const mime = c.mimeType.toLowerCase();
-    if (mime === 'video/h264') return 0;
-    if (mime === 'video/vp9') return 1;
-    if (mime === 'video/av1') return 2;
-    if (mime === 'video/vp8') return 3;
-    return 4; // rtx, red, ulpfec, flexfec keep their relative order at the end
+    const i = order.findIndex((m) => m.toLowerCase() === c.mimeType.toLowerCase());
+    return i === -1 ? order.length : i; // rtx, red, ulpfec, flexfec keep their order at the end
   };
   const codecs = [...caps.codecs].sort((a, b) => rank(a) - rank(b));
   try {
@@ -124,6 +160,7 @@ export class PeerManager extends EventTarget {
     this.streams = { camera: new MediaStream(), movie: new MediaStream() };
     this.tracks = { camVideo: null, micAudio: null, movieVideo: null, movieAudio: null };
     this.moviePreset = STREAM_PRESETS[DEFAULT_PRESET];
+    this.codecOrder = SAFE_DEFAULT_ORDER;
 
     this.onSignal = ({ from, data }) => this.#handleSignal(from, data);
     socket.on('signal', this.onSignal);
@@ -212,7 +249,7 @@ export class PeerManager extends EventTarget {
         const sender = peer.senders[slot];
         if (sender) {
           await sender.replaceTrack(track).catch((err) => console.warn('[rtc] replaceTrack failed', err));
-          if (track) await applySenderParams(sender, slot, this.moviePreset);
+          if (track) await applySenderParams(sender, slot, this.moviePreset, this.codecOrder);
         } else if (track) {
           this.#attach(peer, slot, track);
         }
@@ -221,9 +258,23 @@ export class PeerManager extends EventTarget {
   }
 
   /** Changes bitrate / resolution / degradation for the outgoing movie on every connection. */
-  setMoviePreset(preset) {
+  async setMoviePreset(preset) {
     this.moviePreset = preset;
-    for (const peer of this.peers.values()) applySenderParams(peer.senders.movieVideo, 'movieVideo', preset);
+    this.#applyMovieParams();
+    // Then re-pick the codec for what this device can encode smoothly at this preset.
+    const order = await movieCodecOrder(preset);
+    if (this.moviePreset !== preset) return; // superseded by a newer preset
+    this.codecOrder = order;
+    for (const peer of this.peers.values()) {
+      const sender = peer.senders.movieVideo;
+      if (sender) preferMovieCodecs(peer.pc.getTransceivers().find((t) => t.sender === sender), order);
+    }
+    this.#applyMovieParams();
+    this.dispatchEvent(new CustomEvent('codecs', { detail: { order } }));
+  }
+
+  #applyMovieParams() {
+    for (const peer of this.peers.values()) applySenderParams(peer.senders.movieVideo, 'movieVideo', this.moviePreset, this.codecOrder);
   }
 
   /** Adds a playout buffer to the receivers carrying `tracks` from `peerId` (movie only). */
@@ -248,8 +299,12 @@ export class PeerManager extends EventTarget {
         const sender = peer.senders.movieVideo;
         if (!sender?.track) continue;
         const stats = await sender.getStats();
+        let availableBps = null;
         stats.forEach((s) => {
-          if (s.type === 'outbound-rtp' && s.kind === 'video') result.outbound.push({ peerId: peer.id, ...pick(s, stats) });
+          if (s.type === 'candidate-pair' && s.nominated && s.availableOutgoingBitrate) availableBps = s.availableOutgoingBitrate;
+        });
+        stats.forEach((s) => {
+          if (s.type === 'outbound-rtp' && s.kind === 'video') result.outbound.push({ peerId: peer.id, availableBps, ...pick(s, stats) });
         });
       }
     } else {
@@ -272,13 +327,13 @@ export class PeerManager extends EventTarget {
     const sender = peer.pc.addTrack(track, this.streams[SLOTS[slot].stream]);
     peer.senders[slot] = sender;
     if (slot === 'movieVideo') {
-      preferMovieCodecs(peer.pc.getTransceivers().find((t) => t.sender === sender));
+      preferMovieCodecs(peer.pc.getTransceivers().find((t) => t.sender === sender), this.codecOrder);
     }
-    applySenderParams(sender, slot, this.moviePreset);
+    applySenderParams(sender, slot, this.moviePreset, this.codecOrder);
   }
 
   #applyAllParams(peer) {
-    for (const [slot, sender] of Object.entries(peer.senders)) applySenderParams(sender, slot, this.moviePreset);
+    for (const [slot, sender] of Object.entries(peer.senders)) applySenderParams(sender, slot, this.moviePreset, this.codecOrder);
   }
 
   #send(to, data) {

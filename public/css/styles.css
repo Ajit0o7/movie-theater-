@@ -404,7 +404,7 @@ body.idle .cam-tools { opacity: 0 !important; }
 .quality-row > div:first-child { display: grid; gap: 4px; min-width: 0; flex: 1 1 260px; }
 .quality-row strong { font-size: 14px; }
 .quality-row span { color: var(--text-dim); font-size: 13px; line-height: 1.45; }
-.segmented { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border); }
+.segmented { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border); }
 .segmented button { display: grid; gap: 1px; padding: 6px 12px; border: 0; border-radius: 9px; background: transparent; text-align: center; font-size: 13px; font-weight: 700; }
 .segmented button small { font-size: 11px; font-weight: 500; color: var(--text-faint); }
 .segmented button:hover { background: rgba(255, 255, 255, 0.07); }
@@ -433,6 +433,7 @@ input[type="range"]:not(.timeline-input) { width: 100%; accent-color: var(--acce
   .reaction-tray { flex-wrap: wrap; width: 200px; justify-content: center; }
   .drawer { width: 100vw; }
   .source-grid { grid-template-columns: minmax(0, 1fr); }
+  .segmented { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-body { padding: 20px; }
 }
 

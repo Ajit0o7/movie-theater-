@@ -22,17 +22,24 @@ export function canShareScreen() {
 }
 
 /**
- * Streaming presets for "Stream a file" and "Share screen". Every encoder has to work in
- * real time, and in a mesh it runs once per viewer, so the default favours smooth motion.
- * `degradation` tells WebRTC what to give up under pressure: lowering resolution keeps
- * motion fluid, whereas 'maintain-resolution' drops frames and stutters.
+ * Streaming presets for "Stream a file" and "Share screen".
+ *
+ * The cinema presets cap capture at 30fps. Film is 24fps and tab capture only emits a frame
+ * when the picture changes, so every real movie frame still gets through (a 24fps cap
+ * would drop some whenever frame timing wobbles), while 60fps UI animation can't eat into
+ * the budget. They use 'maintain-resolution': when bandwidth dips, WebRTC compresses harder
+ * or skips a frame but never falls back to a blurry low resolution. Bitrates are caps;
+ * congestion control still adapts below them.
+ *
+ * Smooth (1080p60, 'maintain-framerate') is for content that is really 60fps: sports, games.
  */
 export const STREAM_PRESETS = {
-  smooth: { label: 'Smooth', detail: '1080p · 60fps', width: 1920, height: 1080, fps: 60, bitrate: 8_000_000, degradation: 'maintain-framerate' },
-  sharp: { label: 'Sharp', detail: '1440p · 60fps', width: 2560, height: 1440, fps: 60, bitrate: 12_000_000, degradation: 'balanced' },
-  max: { label: 'Max', detail: '4K · 60fps', width: 3840, height: 2160, fps: 60, bitrate: 20_000_000, degradation: 'balanced' },
+  eco: { label: 'Eco', detail: '1080p · 2.5 Mbps', note: 'Slow internet', width: 1920, height: 1080, fps: 30, bitrate: 2_500_000, degradation: 'maintain-resolution' },
+  cinema: { label: 'Cinema', detail: '1440p · 5 Mbps', note: 'Good internet', width: 2560, height: 1440, fps: 30, bitrate: 5_000_000, degradation: 'maintain-resolution' },
+  max: { label: 'Max', detail: '4K · 10 Mbps', note: 'Fast internet', width: 3840, height: 2160, fps: 30, bitrate: 10_000_000, degradation: 'maintain-resolution' },
+  smooth: { label: 'Smooth', detail: '1080p60 · 8 Mbps', note: 'Sports & games', width: 1920, height: 1080, fps: 60, bitrate: 8_000_000, degradation: 'maintain-framerate' },
 };
-export const DEFAULT_PRESET = 'smooth';
+export const DEFAULT_PRESET = 'eco';
 
 function displayVideoConstraints(preset) {
   return {
@@ -66,6 +73,10 @@ export async function captureDisplay(preset = STREAM_PRESETS[DEFAULT_PRESET]) {
     systemAudio: 'include',
   });
   const video = stream.getVideoTracks()[0];
+  // 'motion', not 'detail': on a screen capture, 'detail' (or no hint) puts Chrome's encoder in
+  // screencast mode, which is tuned for slides and gets choppy on film (Google Meet's
+  // "Optimize for video clips" switches to 'motion' for the same reason). Resolution is held
+  // by the preset's degradationPreference instead.
   if (video) video.contentHint = 'motion';
   const audio = stream.getAudioTracks()[0];
   if (audio) audio.contentHint = 'music';
