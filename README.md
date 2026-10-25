@@ -5,7 +5,8 @@ A zero-install watch-party web app, inspired by [Kosmi](https://app.kosmi.io/) b
 - **Edge-to-edge playback**: the movie fills the viewport. There is no mock room around it, and the controls fade out when you stop moving the mouse. Fullscreen applies to the whole app, so cameras, chat and reactions stay on top.
 - **Two-way control**: anyone in the room can play, pause or seek, and the change applies for everyone, with a toast saying who did it.
 - **Draggable webcams**: drag a camera anywhere (60fps `translate3d`), switch it between S, M and L, or shrink it to a badge. The tile of whoever is speaking glows. Each viewer's layout is remembered.
-- **4K streaming**: screen and tab capture up to 3840×2160 at 60fps. The movie video sender is raised to **20 Mbps** with VP9 preferred and `maintain-resolution`.
+- **YouTube**: paste any YouTube link (`watch`, `youtu.be`, `shorts`, `live`, with `?t=` start times). Everyone plays it in sync through the official embedded player.
+- **Streaming up to 4K**: screen/tab capture and file streaming have three quality presets: **Smooth** 1080p60 at 8 Mbps (the default), **Sharp** 1440p60 at 12 Mbps and **Max** 4K60 at 20 Mbps. H.264 is preferred so hardware encoders do the work, and viewers keep a 400 ms playout buffer to absorb network jitter.
 - **Separate audio paths**: movie audio is sent as Opus stereo at 510 kbps with echo cancellation, noise suppression and AGC turned **off**. Voice uses its own track with all of those **on**. The mixer has separate Movie and Voice volume sliders.
 - **Translucent chat drawer**: it slides over the movie instead of shrinking it, and messages that arrive while it's closed show up as toasts.
 - **Floating reactions**: 🍿 ❤️ 😂 👏 😱 🔥 😭 👀 drift up the screen for everyone.
@@ -27,14 +28,22 @@ Open the page, enter your name and click **Start a theater**, then send the invi
 | Mode | How it works | Quality | Who can control |
 | --- | --- | --- | --- |
 | **Video link** | Everyone's player loads the same direct `.mp4`/`.webm` URL | Whatever the file is, true 4K included. Nothing is re-encoded | Everyone |
+| **YouTube link** | Everyone embeds the same video with YouTube's player. Its controls are hidden so the room HUD is the only remote | YouTube picks the resolution per viewer, up to 4K on large screens | Everyone |
 | **Same file everywhere** | Everyone opens their own copy of the same file. Only play/pause/seek messages are sent | Full original quality, no video over the network | Everyone |
-| **Stream a file** | The host's `<video>` is captured (`captureStream()`) and sent over WebRTC | Up to 20 Mbps per viewer | Everyone (guests' clicks drive the host's player) |
-| **Share screen / tab** | `getDisplayMedia` at 3840×2160 / 60fps, with stereo tab audio | Up to 20 Mbps per viewer | Live, so there's no seeking |
+| **Stream a file** | The host's `<video>` is captured (`captureStream()`) and sent over WebRTC | Quality preset: 1080p60 up to 4K60 | Everyone (guests' clicks drive the host's player) |
+| **Share screen / tab** | `getDisplayMedia` at the preset's size and 60fps, with stereo tab audio | Quality preset: 1080p60 up to 4K60 | Live, so there's no seeking |
 
 Tips:
 - When sharing, choose a **browser tab** and tick **Share tab audio**. That gives the cleanest audio.
 - DRM-protected sites (Netflix, Disney+, etc.) show a black frame in screen capture. This is a browser restriction, not a bug.
 - For the best 4K experience, use **Video link** or **Same file everywhere**. They don't depend on the host's upload speed.
+- YouTube videos whose owner has disabled embedding can't be played, and YouTube may show ads to each viewer separately. The room re-syncs everyone once an ad ends.
+
+### If a share or stream stutters
+
+1. Pick **Smooth** in *Streaming quality* (bottom of the "What are we watching?" dialog). It can be changed during a share.
+2. Press **I** to open stats. *Encoder* shows whether a hardware encoder is used. If it says *(software)*, enable hardware acceleration in the browser settings. *Dropped / freezes* on a viewer's side points to their network or decoder.
+3. Every extra viewer is another full encode and upload on the host. With 3 or more viewers, use Smooth, or have everyone use *Video link* or *Same file everywhere*.
 
 ## Keyboard shortcuts
 
@@ -65,7 +74,8 @@ public/
   js/cameras.js    Draggable camera tiles, speaking detection
   js/chat.js       Slide-over chat & people list
   js/reactions.js  Floating emoji particles
-  js/ambilight.js  Edge colour sampling
+  js/youtube.js    YouTube link parsing + IFrame API adapter that looks like a <video> to sync
+  js/ambilight.js  Glow from a tiny stretched canvas (no pixel readback, no blur filter)
   js/media.js      Capture constraints (4K display, voice vs. movie audio)
 ```
 

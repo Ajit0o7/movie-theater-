@@ -4,9 +4,12 @@ import { Ambilight } from './ambilight.js';
 import { CameraDeck, SpeakingDetector } from './cameras.js';
 import { ChatDrawer } from './chat.js';
 import {
+  DEFAULT_PRESET,
+  STREAM_PRESETS,
+  applyDisplayPreset,
   canCaptureElement,
   canShareScreen,
-  capture4KDisplay,
+  captureDisplay,
   captureElement,
   getCameraTrack,
   getMicTrack,
@@ -15,7 +18,8 @@ import {
 import { Reactions } from './reactions.js';
 import { PeerManager } from './rtc.js';
 import { CinemaSync, ClockSync } from './sync.js';
-import { $, $$, formatTime, storage, toast } from './util.js';
+import { $, $$, formatTime, h, storage, toast } from './util.js';
+import { YouTubeVideo, parseYouTubeUrl, youtubeQualityLabel } from './youtube.js';
 
 const roomId = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '').toLowerCase();
 const player = $('#player');
@@ -27,8 +31,15 @@ const settings = {
   movieVolume: 1,
   voiceVolume: 1,
   ambilight: true,
+  quality: DEFAULT_PRESET,
   ...storage.get('cinema.settings', {}),
 };
+if (!STREAM_PRESETS[settings.quality]) settings.quality = DEFAULT_PRESET;
+const currentPreset = () => STREAM_PRESETS[settings.quality];
+
+// The thing actually playing: the <video> element, or the YouTube adapter.
+let yt = null;
+const media = () => yt ?? player;
 
 const local = {
   name: '',
@@ -133,6 +144,7 @@ async function joinRoom() {
   teardownSession();
   const selfId = socket.id;
   const rtc = new PeerManager({ socket, selfId, iceServers });
+  rtc.setMoviePreset(currentPreset());
   const sync = new CinemaSync({ socket, clock, video: player, selfId });
   const chat = new ChatDrawer({ socket, selfId });
   const reactions = new Reactions({ socket });
@@ -366,6 +378,15 @@ function plannedKey(type, name, url = null) {
 $('#url-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = $('#url-input').value.trim();
+  const youtube = parseYouTubeUrl(url);
+  if (youtube) {
+    releaseOwnMedia();
+    if (await setSource({ type: 'youtube', videoId: youtube.videoId, name: 'YouTube video' })) {
+      $('#url-input').value = '';
+      if (youtube.start) session.sync.seek(youtube.start);
+    }
+    return;
+  }
   let name = url;
   try {
     name = decodeURIComponent(new URL(url).pathname.split('/').pop()) || url;
@@ -420,7 +441,7 @@ async function shareScreen() {
   if (!session) return;
   let display;
   try {
-    display = await capture4KDisplay();
+    display = await captureDisplay(currentPreset());
   } catch (err) {
     if (err?.name !== 'NotAllowedError') toast('Screen sharing failed.', { tone: 'error' });
     return;
@@ -501,10 +522,17 @@ function renderSource() {
     local.localCopy = null;
   }
 
+  if (source.type !== 'youtube') unmountYouTube();
+
   switch (source.type) {
     case 'url':
       show(null);
       loadPlayer(key, { src: source.url });
+      break;
+    case 'youtube':
+      show(null);
+      clearPlayer();
+      mountYouTube(source.videoId);
       break;
     case 'local':
       if (local.localCopy) {
@@ -530,6 +558,7 @@ function renderSource() {
         const stream = streamOfKind(source.ownerId, 'movie');
         if (stream && stream.getVideoTracks().length) {
           show(null);
+          session.rtc.setPlayoutBuffer(source.ownerId, stream.getTracks());
           loadPlayer(`${key}|${stream.id}`, { srcObject: stream });
         } else {
           clearPlayer();
@@ -544,8 +573,33 @@ function renderSource() {
   }
   applyMovieVolume();
   $('#stop-source').hidden = source.type === 'none';
-  $('#now-playing').textContent = source.type === 'none' ? '' : source.name || '';
+  $('#now-playing').textContent = source.type === 'none' ? '' : (source.type === 'youtube' && yt?.title) || source.name || '';
   document.body.classList.toggle('has-source', source.type !== 'none');
+}
+
+function mountYouTube(videoId) {
+  if (yt?.videoId !== videoId) {
+    unmountYouTube();
+    const host = $('#yt-host');
+    yt = new YouTubeVideo(host, videoId);
+    host.hidden = false;
+    player.hidden = true;
+    yt.volume = settings.movieVolume;
+    yt.addEventListener('error', ({ detail }) => toast(detail.message, { tone: 'error', duration: 6000 }));
+    yt.addEventListener('loadedmetadata', () => {
+      if (yt?.title && session?.sync.source.type === 'youtube') $('#now-playing').textContent = yt.title;
+    });
+  }
+  session?.sync.setVideo(yt);
+}
+
+function unmountYouTube() {
+  if (!yt) return;
+  yt.destroy();
+  yt = null;
+  $('#yt-host').hidden = true;
+  player.hidden = false;
+  session?.sync.setVideo(player);
 }
 
 /** When we are streaming a file, capture the player as soon as media is ready. */
@@ -604,39 +658,51 @@ const buffer = $('#timeline-buffer');
 const tooltip = $('#timeline-tooltip');
 let scrubbing = false;
 
+// The HUD updates 4×/second and writes only what changed, so it never competes with video
+// playback for main-thread time. While idle (HUD hidden) the timeline isn't touched at all.
+const hudCache = new Map();
+function write(key, value, apply) {
+  if (hudCache.get(key) === value) return;
+  hudCache.set(key, value);
+  apply(value);
+}
+
 function renderHud() {
-  requestAnimationFrame(renderHud);
   const sync = session?.sync;
   if (!sync) return;
+  const m = media();
   const playing = Boolean(sync.state?.playing);
   const live = sync.source.type === 'screen';
+
+  write('icon', playing || live ? '#i-pause' : '#i-play', (v) => $('#play-btn use').setAttribute('href', v));
+  write('playing', playing || (live && !m.paused), (v) => document.body.classList.toggle('is-playing', v));
+  write('controllable', sync.controllable, (v) => document.body.classList.toggle('not-controllable', !v));
+  write('live', live, (v) => {
+    $('#live-badge').hidden = !v;
+    $('#time-label').hidden = v;
+  });
+  if (document.body.classList.contains('idle')) return;
+
   const duration = sync.duration();
   const position = sync.localTime();
-
-  $('#play-btn use').setAttribute('href', playing || live ? '#i-pause' : '#i-play');
-  document.body.classList.toggle('is-playing', playing || (live && !player.paused));
-  document.body.classList.toggle('not-controllable', !sync.controllable);
-  $('#live-badge').hidden = !live;
-  $('#time-label').hidden = live;
-
   if (!scrubbing) {
     const ratio = duration > 0 ? Math.min(1, position / duration) : 0;
-    fill.style.transform = `scaleX(${ratio})`;
-    thumb.style.left = `${ratio * 100}%`;
-    seek.value = String(Math.round(ratio * 1000));
-    $('#time-label').textContent = `${formatTime(position)} / ${formatTime(duration)}`;
+    write('ratio', ratio.toFixed(4), (v) => {
+      fill.style.transform = `scaleX(${v})`;
+      thumb.style.left = `${v * 100}%`;
+      seek.value = String(Math.round(v * 1000));
+    });
+    write('time', `${formatTime(position)} / ${formatTime(duration)}`, (v) => ($('#time-label').textContent = v));
   }
-  if (sync.isController && duration > 0 && player.buffered.length) {
-    let end = 0;
-    for (let i = 0; i < player.buffered.length; i++) {
-      if (player.buffered.start(i) <= position + 1) end = Math.max(end, player.buffered.end(i));
+  let end = 0;
+  if (sync.isController && duration > 0 && m.buffered.length) {
+    for (let i = 0; i < m.buffered.length; i++) {
+      if (m.buffered.start(i) <= position + 1) end = Math.max(end, m.buffered.end(i));
     }
-    buffer.style.transform = `scaleX(${Math.min(1, end / duration)})`;
-  } else {
-    buffer.style.transform = 'scaleX(0)';
   }
+  write('buffer', duration > 0 ? Math.min(1, end / duration).toFixed(3) : '0', (v) => (buffer.style.transform = `scaleX(${v})`));
 }
-requestAnimationFrame(renderHud);
+setInterval(renderHud, 250);
 
 seek.addEventListener('input', () => {
   scrubbing = true;
@@ -648,6 +714,8 @@ seek.addEventListener('input', () => {
 });
 seek.addEventListener('change', () => {
   scrubbing = false;
+  hudCache.delete('ratio');
+  hudCache.delete('time');
   const duration = session?.sync.duration() ?? 0;
   if (duration > 0) session.sync.seek((Number(seek.value) / 1000) * duration);
 });
@@ -710,6 +778,7 @@ ambToggle.checked = settings.ambilight;
 
 function applyMovieVolume() {
   player.volume = settings.movieVolume;
+  if (yt) yt.volume = settings.movieVolume;
   if (local.own?.monitor) local.own.monitor.volume = settings.movieVolume;
 }
 function applySettings() {
@@ -760,6 +829,10 @@ async function updateStats() {
       const mbps = prev ? ((s.bytes - prev.bytes) * 8) / ((s.timestamp - prev.timestamp) * 1000) : 0;
       label = `${resolutionLabel(s.frameHeight || player.videoHeight)} · ${mbps.toFixed(1)} Mbps`;
       lines.push(['Receiving', `${s.frameWidth ?? '?'}×${s.frameHeight ?? '?'} @ ${Math.round(s.fps || 0)}fps`], ['Bitrate', `${mbps.toFixed(2)} Mbps`]);
+      if (s.codec) lines.push(['Codec', s.codec]);
+      if (s.decoder) lines.push(['Decoder', `${s.decoder}${s.powerEfficient ? ' (hardware)' : ''}`]);
+      if (s.bufferMs != null) lines.push(['Buffer', `${Math.round(s.bufferMs)} ms`]);
+      lines.push(['Dropped / freezes', `${s.framesDropped ?? 0} / ${s.freezeCount ?? 0}`]);
     }
     if (stats.outbound.length) {
       let total = 0;
@@ -769,13 +842,22 @@ async function updateStats() {
         total += mbps;
         lines.push([`→ ${session.peers.get(s.peerId)?.name ?? 'peer'}`, `${s.frameWidth ?? '?'}×${s.frameHeight ?? '?'} · ${mbps.toFixed(1)} Mbps${s.limitation && s.limitation !== 'none' ? ` (limited: ${s.limitation})` : ''}`]);
       }
-      label = `${resolutionLabel(stats.outbound[0].frameHeight)} · ↑${total.toFixed(1)} Mbps`;
+      const first = stats.outbound[0];
+      if (first.codec) lines.push(['Codec', first.codec]);
+      if (first.encoder) lines.push(['Encoder', `${first.encoder}${first.powerEfficient ? ' (hardware)' : ' (software)'}`]);
+      lines.push(['Quality preset', `${currentPreset().label} · ${currentPreset().detail}`]);
+      label = `${resolutionLabel(first.frameHeight)} · ↑${total.toFixed(1)} Mbps`;
     }
     lastStats = { ...stats, at: now };
+  } else if (sync.source.type === 'youtube') {
+    label = yt ? youtubeQualityLabel(yt.quality) : '';
+    lines.push(['Mode', 'YouTube (each viewer streams from YouTube)']);
+    if (label) lines.push(['YouTube quality', label]);
   } else {
     lines.push(['Mode', sync.source.type === 'url' ? 'Direct link (each viewer streams the source)' : 'Local copy (nothing sent over the network)']);
   }
-  lines.push(['Drift', sync.isController && player.readyState ? `${((player.currentTime - sync.expectedTime()) * 1000).toFixed(0)} ms` : '—']);
+  const m = media();
+  lines.push(['Drift', sync.isController && m.readyState ? `${((m.currentTime - sync.expectedTime()) * 1000).toFixed(0)} ms` : '—']);
 
   chip.hidden = !label;
   chip.textContent = label;
@@ -828,9 +910,42 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#reaction-picker')) session?.reactions.toggleTray(false);
 });
 
-// Clicking the movie itself toggles play/pause, like a normal player.
-player.addEventListener('click', () => session?.sync.controllable && session.sync.toggle());
-player.addEventListener('dblclick', toggleFullscreen);
+// Clicking the movie itself toggles play/pause, like a normal player. The shield covers the
+// <video> and the YouTube iframe alike, so YouTube's own UI can never desync the room.
+const shield = $('#click-shield');
+let clickTimer = null;
+shield.addEventListener('click', () => {
+  // Wait briefly so a double-click (fullscreen) doesn't also toggle playback twice.
+  clearTimeout(clickTimer);
+  clickTimer = setTimeout(() => session?.sync.controllable && session.sync.toggle(), 220);
+});
+shield.addEventListener('dblclick', () => {
+  clearTimeout(clickTimer);
+  toggleFullscreen();
+});
+
+// Streaming quality picker (applies live to an ongoing share/stream).
+function renderQualityPicker() {
+  $('#quality-picker').replaceChildren(
+    ...Object.entries(STREAM_PRESETS).map(([id, p]) =>
+      h('button', { type: 'button', role: 'radio', 'aria-checked': String(id === settings.quality), 'data-preset': id }, [
+        p.label,
+        h('small', { text: p.detail }),
+      ]),
+    ),
+  );
+}
+$('#quality-picker').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-preset]');
+  if (!btn) return;
+  settings.quality = btn.dataset.preset;
+  storage.set('cinema.settings', settings);
+  renderQualityPicker();
+  session?.rtc.setMoviePreset(currentPreset());
+  if (local.own?.display) applyDisplayPreset(local.own.display.getVideoTracks()[0], currentPreset());
+  toast(`Streaming quality: ${currentPreset().label} (${currentPreset().detail})`);
+});
+renderQualityPicker();
 
 $('#unblock').addEventListener('click', () => {
   $('#unblock').hidden = true;

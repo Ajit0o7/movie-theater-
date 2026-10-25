@@ -40,8 +40,11 @@
 
   <!-- Edge-to-edge stage -->
   <main id="stage" class="stage">
-    <div id="ambilight" class="ambilight" aria-hidden="true"></div>
+    <canvas id="ambilight" class="ambilight" aria-hidden="true"></canvas>
+    <div id="yt-host" class="player yt-host" hidden></div>
     <video id="player" class="player" playsinline preload="auto"></video>
+    <!-- Catches clicks over the movie (incl. the YouTube iframe) so every play/pause goes through room sync. -->
+    <div id="click-shield" class="click-shield" aria-hidden="true"></div>
 
     <div id="empty-state" class="stage-message" hidden>
       <p class="eyebrow">Nothing playing</p>
@@ -170,15 +173,15 @@
       <div class="source-grid">
         <section class="source-card">
           <h3><svg class="icon"><use href="#i-link"/></svg>Video link</h3>
-          <p>A direct <code>.mp4</code> or <code>.webm</code> URL. Each person streams it from the source, so 4K files stay 4K.</p>
+          <p>A <strong>YouTube</strong> link or a direct <code>.mp4</code> / <code>.webm</code> URL. Each person streams it straight from the source, so 4K stays 4K.</p>
           <form id="url-form" class="inline-form">
-            <input id="url-input" type="url" placeholder="https://…/movie.mp4" required>
+            <input id="url-input" type="url" placeholder="YouTube or .mp4 link" required>
             <button class="btn btn-primary" type="submit">Play</button>
           </form>
         </section>
         <section class="source-card">
           <h3><svg class="icon"><use href="#i-upload"/></svg>Stream a file</h3>
-          <p>Play a file from this device and send it to everyone over WebRTC at up to 20&nbsp;Mbps. Anyone can pause or seek.</p>
+          <p>Play a file from this device and send it to everyone over WebRTC at the quality chosen below. Anyone can pause or seek.</p>
           <label class="btn btn-ghost"><input type="file" id="stream-file" accept="video/*,.mkv" hidden>Choose file…</label>
         </section>
         <section class="source-card">
@@ -188,9 +191,16 @@
         </section>
         <section class="source-card" id="screen-card">
           <h3><svg class="icon"><use href="#i-screen"/></svg>Share screen or tab</h3>
-          <p>Capture at up to 3840×2160 / 60fps with stereo tab audio. Tick <em>Share tab audio</em> in the browser prompt.</p>
+          <p>Capture a tab or screen at the quality chosen below, with stereo tab audio. Tick <em>Share tab audio</em> in the browser prompt.</p>
           <button class="btn btn-ghost" data-action="share-screen">Share…</button>
         </section>
+      </div>
+      <div class="quality-row">
+        <div>
+          <strong>Streaming quality</strong>
+          <span>Applies to <em>Stream a file</em> and <em>Share screen</em>. Use Smooth if the picture stutters.</span>
+        </div>
+        <div class="segmented" id="quality-picker" role="radiogroup" aria-label="Streaming quality"></div>
       </div>
       <button class="btn btn-danger" data-action="stop-source" id="stop-source" hidden><svg class="icon"><use href="#i-stop"/></svg>Stop what's playing</button>
     </div>

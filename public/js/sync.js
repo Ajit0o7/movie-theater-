@@ -11,6 +11,7 @@
 const HARD_SEEK_THRESHOLD = 1.5; // seconds of drift before we jump
 const SOFT_DRIFT_THRESHOLD = 0.25; // seconds of drift before we nudge playbackRate
 const NUDGE = 0.05;
+const COARSE_SEEK_THRESHOLD = 0.8; // players without fine playbackRate (YouTube) seek past this
 
 export class ClockSync {
   constructor(socket) {
@@ -59,11 +60,26 @@ export class CinemaSync extends EventTarget {
     socket.on('sync:state', this.onState);
 
     this.onMeta = () => this.#reportDuration();
-    video.addEventListener('loadedmetadata', this.onMeta);
     this.onEnded = () => {
       if (this.isController && this.state?.playing) this.#send('PAUSE', this.video.duration);
     };
+    this.video = null;
+    this.setVideo(video);
+  }
+
+  /**
+   * Switches the player being steered: an HTMLVideoElement, or anything exposing the same
+   * subset (currentTime, duration, paused, seeking, readyState, play(), pause(), events),
+   * such as the YouTube adapter.
+   */
+  setVideo(video) {
+    if (this.video === video) return;
+    this.video?.removeEventListener('loadedmetadata', this.onMeta);
+    this.video?.removeEventListener('ended', this.onEnded);
+    this.video = video;
+    video.addEventListener('loadedmetadata', this.onMeta);
     video.addEventListener('ended', this.onEnded);
+    this.apply();
   }
 
   setInitialState(playback) {
@@ -82,12 +98,12 @@ export class CinemaSync extends EventTarget {
   /** True when this client's <video> is a real, seekable player that must follow room state. */
   get isController() {
     const { type } = this.source;
-    return type === 'url' || type === 'local' || (type === 'stream' && this.isOwner);
+    return type === 'url' || type === 'youtube' || type === 'local' || (type === 'stream' && this.isOwner);
   }
 
   get controllable() {
     const { type } = this.source;
-    return type === 'url' || type === 'local' || type === 'stream';
+    return type === 'url' || type === 'youtube' || type === 'local' || type === 'stream';
   }
 
   /** Media time the room should be at right now. */
@@ -141,7 +157,9 @@ export class CinemaSync extends EventTarget {
     const s = this.state;
     if (!s || !this.isController || !this.#hasMedia()) return;
     const target = this.expectedTime();
-    if (Math.abs(this.video.currentTime - target) > SOFT_DRIFT_THRESHOLD && !this.video.seeking) {
+    // Seeking a YouTube embed re-buffers, so tolerate a little more before jumping.
+    const tolerance = this.video.supportsRateNudge === false ? 0.5 : SOFT_DRIFT_THRESHOLD;
+    if (Math.abs(this.video.currentTime - target) > tolerance && !this.video.seeking) {
       this.video.currentTime = target;
     }
     this.video.playbackRate = 1;
@@ -169,8 +187,8 @@ export class CinemaSync extends EventTarget {
     clearInterval(this.driftTimer);
     clearInterval(this.heartbeatTimer);
     this.socket.off('sync:state', this.onState);
-    this.video.removeEventListener('loadedmetadata', this.onMeta);
-    this.video.removeEventListener('ended', this.onEnded);
+    this.video?.removeEventListener('loadedmetadata', this.onMeta);
+    this.video?.removeEventListener('ended', this.onEnded);
   }
 
   #send(action, time) {
@@ -203,10 +221,11 @@ export class CinemaSync extends EventTarget {
     if (this.video.paused || this.video.seeking || this.video.readyState < 3) return;
     const drift = this.video.currentTime - this.expectedTime();
     const abs = Math.abs(drift);
-    if (abs > HARD_SEEK_THRESHOLD) {
+    // YouTube only supports coarse rates, so it can't be nudged; it just seeks on big drift.
+    if (abs > HARD_SEEK_THRESHOLD || (this.video.supportsRateNudge === false && abs > COARSE_SEEK_THRESHOLD)) {
       this.video.currentTime = this.expectedTime();
       this.video.playbackRate = 1;
-    } else if (abs > SOFT_DRIFT_THRESHOLD) {
+    } else if (abs > SOFT_DRIFT_THRESHOLD && this.video.supportsRateNudge !== false) {
       this.video.playbackRate = drift > 0 ? 1 - NUDGE : 1 + NUDGE;
     } else if (this.video.playbackRate !== 1) {
       this.video.playbackRate = 1;

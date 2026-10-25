@@ -21,14 +21,36 @@ export function canShareScreen() {
   return Boolean(navigator.mediaDevices?.getDisplayMedia);
 }
 
-/** 4K / 60fps capture with unfiltered stereo tab audio. */
-export async function capture4KDisplay() {
+/**
+ * Streaming presets for "Stream a file" and "Share screen". Every encoder has to work in
+ * real time, and in a mesh it runs once per viewer, so the default favours smooth motion.
+ * `degradation` tells WebRTC what to give up under pressure: lowering resolution keeps
+ * motion fluid, whereas 'maintain-resolution' drops frames and stutters.
+ */
+export const STREAM_PRESETS = {
+  smooth: { label: 'Smooth', detail: '1080p · 60fps', width: 1920, height: 1080, fps: 60, bitrate: 8_000_000, degradation: 'maintain-framerate' },
+  sharp: { label: 'Sharp', detail: '1440p · 60fps', width: 2560, height: 1440, fps: 60, bitrate: 12_000_000, degradation: 'balanced' },
+  max: { label: 'Max', detail: '4K · 60fps', width: 3840, height: 2160, fps: 60, bitrate: 20_000_000, degradation: 'balanced' },
+};
+export const DEFAULT_PRESET = 'smooth';
+
+function displayVideoConstraints(preset) {
+  return {
+    width: { ideal: preset.width, max: preset.width },
+    height: { ideal: preset.height, max: preset.height },
+    frameRate: { ideal: preset.fps, max: preset.fps },
+  };
+}
+
+/** Re-targets a live screen capture when the quality preset changes mid-share. */
+export function applyDisplayPreset(track, preset) {
+  return track?.applyConstraints(displayVideoConstraints(preset)).catch(() => {});
+}
+
+/** Screen/tab capture (up to 4K60 depending on preset) with unfiltered stereo tab audio. */
+export async function captureDisplay(preset = STREAM_PRESETS[DEFAULT_PRESET]) {
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: {
-      width: { ideal: 3840, max: 3840 },
-      height: { ideal: 2160, max: 2160 },
-      frameRate: { ideal: 60, max: 60 },
-    },
+    video: displayVideoConstraints(preset),
     audio: {
       autoGainControl: false,
       echoCancellation: false, // keeps the soundtrack from being treated as echo

@@ -5,9 +5,10 @@
 // renegotiation) when cameras toggle or the movie source changes:
 //
 //   camVideo + micAudio      -> "camera" MediaStream (voice: echo-cancelled)
-//   movieVideo + movieAudio  -> "movie" MediaStream (4K, 20 Mbps, unfiltered stereo)
+//   movieVideo + movieAudio  -> "movie" MediaStream (up to 4K / 20 Mbps, unfiltered stereo)
 
-export const MOVIE_VIDEO_BITRATE = 20_000_000;
+import { DEFAULT_PRESET, STREAM_PRESETS } from './media.js';
+
 export const MOVIE_AUDIO_BITRATE = 510_000;
 export const CAMERA_VIDEO_BITRATE = 1_200_000;
 export const VOICE_AUDIO_BITRATE = 64_000;
@@ -40,20 +41,28 @@ export function enableOpusStereo(sdp) {
   });
 }
 
+/**
+ * Movie receivers get a deliberate playout buffer. WebRTC defaults to call-style minimal
+ * latency, which turns any network jitter into visible stutter; a movie can afford ~0.4s.
+ */
+export const MOVIE_JITTER_BUFFER_MS = 400;
+
 /** Lifts the browser's default (~2.5 Mbps) sender cap. Safe to call repeatedly. */
-export async function applySenderParams(sender, slot) {
+export async function applySenderParams(sender, slot, preset = STREAM_PRESETS[DEFAULT_PRESET]) {
   if (!sender?.track) return;
   try {
     const params = sender.getParameters();
     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
     const enc = params.encodings[0];
     if (slot === 'movieVideo') {
-      enc.maxBitrate = MOVIE_VIDEO_BITRATE;
-      enc.scaleResolutionDownBy = 1.0;
-      enc.maxFramerate = 60;
+      // A captured 4K file is scaled down to the preset; screen capture is already sized.
+      const height = sender.track.getSettings?.().height;
+      enc.scaleResolutionDownBy = height && height > preset.height ? height / preset.height : 1;
+      enc.maxBitrate = preset.bitrate;
+      enc.maxFramerate = preset.fps;
       enc.priority = 'high';
       enc.networkPriority = 'high';
-      params.degradationPreference = 'maintain-resolution';
+      params.degradationPreference = preset.degradation;
     } else if (slot === 'movieAudio') {
       enc.maxBitrate = MOVIE_AUDIO_BITRATE;
       enc.priority = 'high';
@@ -71,7 +80,7 @@ export async function applySenderParams(sender, slot) {
     try {
       const params = sender.getParameters();
       if (!params.encodings?.length) return;
-      if (slot === 'movieVideo') params.encodings[0].maxBitrate = MOVIE_VIDEO_BITRATE;
+      if (slot === 'movieVideo') params.encodings[0].maxBitrate = preset.bitrate;
       if (slot === 'movieAudio') params.encodings[0].maxBitrate = MOVIE_AUDIO_BITRATE;
       await sender.setParameters(params);
     } catch {
@@ -80,15 +89,19 @@ export async function applySenderParams(sender, slot) {
   }
 }
 
-/** Prefers VP9, then AV1/H.264, for the movie track: far better at 4K than VP8. */
+/**
+ * Prefers H.264 for the movie track: nearly every GPU (NVIDIA, Intel, AMD, Apple) encodes
+ * it in hardware, so 1080p–4K at 60fps doesn't saturate the CPU and drop frames. VP9 is
+ * the fallback; its encoder is usually software-only.
+ */
 function preferMovieCodecs(transceiver) {
   if (!transceiver?.setCodecPreferences || !window.RTCRtpReceiver?.getCapabilities) return;
   const caps = RTCRtpReceiver.getCapabilities('video');
   if (!caps) return;
   const rank = (c) => {
     const mime = c.mimeType.toLowerCase();
-    if (mime === 'video/vp9') return 0;
-    if (mime === 'video/h264') return 1;
+    if (mime === 'video/h264') return 0;
+    if (mime === 'video/vp9') return 1;
     if (mime === 'video/av1') return 2;
     if (mime === 'video/vp8') return 3;
     return 4; // rtx, red, ulpfec, flexfec keep their relative order at the end
@@ -110,6 +123,7 @@ export class PeerManager extends EventTarget {
     this.peers = new Map();
     this.streams = { camera: new MediaStream(), movie: new MediaStream() };
     this.tracks = { camVideo: null, micAudio: null, movieVideo: null, movieAudio: null };
+    this.moviePreset = STREAM_PRESETS[DEFAULT_PRESET];
 
     this.onSignal = ({ from, data }) => this.#handleSignal(from, data);
     socket.on('signal', this.onSignal);
@@ -152,6 +166,9 @@ export class PeerManager extends EventTarget {
         await pc.setLocalDescription({ type: 'offer', sdp: enableOpusStereo(offer.sdp) });
         this.#send(peerId, { description: pc.localDescription });
       } catch (err) {
+        // A remote offer arrived while ours was being created (glare). Perfect negotiation
+        // resolves it via the remote offer, and negotiationneeded fires again afterwards.
+        if (err?.name === 'InvalidStateError' && pc.signalingState !== 'stable') return;
         console.warn('[rtc] negotiation failed', err);
       } finally {
         peer.makingOffer = false;
@@ -195,12 +212,29 @@ export class PeerManager extends EventTarget {
         const sender = peer.senders[slot];
         if (sender) {
           await sender.replaceTrack(track).catch((err) => console.warn('[rtc] replaceTrack failed', err));
-          if (track) await applySenderParams(sender, slot);
+          if (track) await applySenderParams(sender, slot, this.moviePreset);
         } else if (track) {
           this.#attach(peer, slot, track);
         }
       }),
     );
+  }
+
+  /** Changes bitrate / resolution / degradation for the outgoing movie on every connection. */
+  setMoviePreset(preset) {
+    this.moviePreset = preset;
+    for (const peer of this.peers.values()) applySenderParams(peer.senders.movieVideo, 'movieVideo', preset);
+  }
+
+  /** Adds a playout buffer to the receivers carrying `tracks` from `peerId` (movie only). */
+  setPlayoutBuffer(peerId, tracks, ms = MOVIE_JITTER_BUFFER_MS) {
+    const pc = this.peers.get(peerId)?.pc;
+    if (!pc) return;
+    for (const receiver of pc.getReceivers()) {
+      if (!receiver.track || !tracks.includes(receiver.track)) continue;
+      if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = ms;
+      else if ('playoutDelayHint' in receiver) receiver.playoutDelayHint = ms / 1000; // older Chrome
+    }
   }
 
   /**
@@ -215,7 +249,7 @@ export class PeerManager extends EventTarget {
         if (!sender?.track) continue;
         const stats = await sender.getStats();
         stats.forEach((s) => {
-          if (s.type === 'outbound-rtp' && s.kind === 'video') result.outbound.push({ peerId: peer.id, ...pick(s) });
+          if (s.type === 'outbound-rtp' && s.kind === 'video') result.outbound.push({ peerId: peer.id, ...pick(s, stats) });
         });
       }
     } else {
@@ -223,7 +257,7 @@ export class PeerManager extends EventTarget {
       if (!receiver) return result;
       const stats = await receiver.getStats();
       stats.forEach((s) => {
-        if (s.type === 'inbound-rtp' && s.kind === 'video') result.inbound = pick(s);
+        if (s.type === 'inbound-rtp' && s.kind === 'video') result.inbound = pick(s, stats);
       });
     }
     return result;
@@ -240,11 +274,11 @@ export class PeerManager extends EventTarget {
     if (slot === 'movieVideo') {
       preferMovieCodecs(peer.pc.getTransceivers().find((t) => t.sender === sender));
     }
-    applySenderParams(sender, slot);
+    applySenderParams(sender, slot, this.moviePreset);
   }
 
   #applyAllParams(peer) {
-    for (const [slot, sender] of Object.entries(peer.senders)) applySenderParams(sender, slot);
+    for (const [slot, sender] of Object.entries(peer.senders)) applySenderParams(sender, slot, this.moviePreset);
   }
 
   #send(to, data) {
@@ -286,8 +320,16 @@ export class PeerManager extends EventTarget {
   }
 }
 
-function pick(s) {
+function pick(s, report) {
+  const codec = s.codecId && report.get(s.codecId);
   return {
+    codec: codec ? codec.mimeType.replace('video/', '') : null,
+    encoder: s.encoderImplementation,
+    decoder: s.decoderImplementation,
+    powerEfficient: s.powerEfficientEncoder ?? s.powerEfficientDecoder,
+    framesDropped: s.framesDropped,
+    freezeCount: s.freezeCount,
+    bufferMs: s.jitterBufferEmittedCount ? (s.jitterBufferDelay / s.jitterBufferEmittedCount) * 1000 : null,
     bytes: s.bytesSent ?? s.bytesReceived ?? 0,
     timestamp: s.timestamp,
     frameWidth: s.frameWidth,

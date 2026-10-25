@@ -11,9 +11,10 @@ export const CHAT_HISTORY_LIMIT = 100;
 export const MAX_CHAT_LENGTH = 1000;
 export const MAX_NAME_LENGTH = 32;
 export const REACTIONS = ['🍿', '❤️', '😂', '👏', '😱', '🔥', '😭', '👀'];
-// url: everyone loads the same link; local: everyone opens their own copy of the same file;
+// url: everyone loads the same link; youtube: everyone embeds the same YouTube video;
+// local: everyone opens their own copy of the same file;
 // stream: one person's file is streamed over WebRTC; screen: one person's screen/tab capture.
-export const SOURCE_TYPES = ['none', 'url', 'local', 'stream', 'screen'];
+export const SOURCE_TYPES = ['none', 'url', 'youtube', 'local', 'stream', 'screen'];
 
 const ROOM_ID_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
 
@@ -130,6 +131,17 @@ export function setSource(room, actorId, input, now = Date.now()) {
     const url = String(input.url ?? '').trim();
     if (!/^https?:\/\//i.test(url) || url.length > 2048) throw new RoomError('BAD_SOURCE', 'Enter a valid http(s) video URL.');
     source = { type, url, name: String(input.name ?? '').slice(0, 200) || url, ownerId: actorId, duration: null };
+  } else if (type === 'youtube') {
+    const videoId = String(input.videoId ?? '');
+    if (!/^[\w-]{11}$/.test(videoId)) throw new RoomError('BAD_SOURCE', 'That YouTube link has no valid video id.');
+    source = {
+      type,
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      videoId,
+      name: String(input.name ?? '').slice(0, 200) || 'YouTube video',
+      ownerId: actorId,
+      duration: null,
+    };
   } else if (type === 'local' || type === 'stream' || type === 'screen') {
     source = {
       type,

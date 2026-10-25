@@ -73,6 +73,15 @@ test('sync events are ignored with no source or a live screen share', () => {
   assert.equal(applySyncEvent(room, 'p0', { action: 'EXPLODE' }), null);
 });
 
+test('youtube sources need a valid video id and are two-way controllable', () => {
+  const room = roomWith('A', 'B');
+  assert.throws(() => setSource(room, 'p0', { type: 'youtube', videoId: 'x"><script>' }), /video id/);
+  const snap = setSource(room, 'p0', { type: 'youtube', videoId: 'dQw4w9WgXcQ' });
+  assert.equal(snap.source.url, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  assert.equal(snap.source.videoId, 'dQw4w9WgXcQ');
+  assert.equal(applySyncEvent(room, 'p1', { action: 'PLAY', time: 12 }).playing, true);
+});
+
 test('url sources must be http(s)', () => {
   const room = roomWith('A');
   assert.throws(() => setSource(room, 'p0', { type: 'url', url: 'javascript:alert(1)' }), /valid/);
