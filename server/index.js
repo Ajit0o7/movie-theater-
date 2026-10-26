@@ -2,7 +2,9 @@
 // owns the authoritative room state (playback sync, chat, presence).
 
 import express from 'express';
+import fs from 'node:fs';
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Server } from 'socket.io';
@@ -24,6 +26,7 @@ import {
   setSource,
   snapshotPlayback,
 } from './rooms.js';
+import { lanAddresses, loadOrCreateCert } from './tls.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -37,9 +40,10 @@ export function iceServersFromEnv(env = process.env) {
   return servers;
 }
 
-export function createCinemaServer({ env = process.env } = {}) {
+/** `tls` ({ cert, key }) serves over HTTPS, which browsers require for camera/mic/screen on a LAN IP. */
+export function createCinemaServer({ env = process.env, tls = null } = {}) {
   const app = express();
-  const httpServer = createServer(app);
+  const httpServer = tls ? createHttpsServer(tls, app) : createServer(app);
   const io = new Server(httpServer, { maxHttpBufferSize: 1e6 });
   const rooms = new Map();
   const cleanupTimers = new Map();
@@ -181,11 +185,44 @@ export function createCinemaServer({ env = process.env } = {}) {
   return { app, httpServer, io, rooms };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain) {
+/**
+ * True when this file is the program being run (`node server/index.js`), not when it is
+ * imported by tests. Compares real paths, case-insensitively on Windows, where a terminal
+ * may report the drive as c:\ while the module URL says C:\ (a plain string comparison
+ * there would make `npm start` exit silently).
+ */
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    const run = fs.realpathSync(process.argv[1]);
+    const self = fs.realpathSync(fileURLToPath(import.meta.url));
+    return process.platform === 'win32' ? run.toLowerCase() === self.toLowerCase() : run === self;
+  } catch {
+    return false;
+  }
+}
+
+async function main() {
   const port = Number(process.env.PORT) || 3000;
-  const { httpServer } = createCinemaServer();
+  const https = process.argv.includes('--https') || process.env.HTTPS === '1';
+  const tls = https ? await loadOrCreateCert(path.join(__dirname, '..', '.cert')) : null;
+  const { httpServer } = createCinemaServer({ tls });
+  httpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use. Close the other server or run with PORT=<another port>.`);
+    else console.error(err);
+    process.exit(1);
+  });
   httpServer.listen(port, () => {
-    console.log(`🎬 4K Virtual Cinema running at http://localhost:${port}`);
+    const scheme = https ? 'https' : 'http';
+    console.log(`🎬 4K Virtual Cinema running at ${scheme}://localhost:${port}`);
+    const lan = lanAddresses();
+    if (https) {
+      for (const ip of lan) console.log(`   Same Wi-Fi: ${scheme}://${ip}:${port}`);
+      console.log('   The certificate is self-signed: in the browser choose "Advanced" → "Proceed" once per device.');
+    } else if (lan.length) {
+      console.log(`   Friends on the same Wi-Fi need camera/mic/screen share? Run "npm run start:https" (plain http://${lan[0]}:${port} blocks them).`);
+    }
   });
 }
+
+if (isMainModule()) main();

@@ -21,7 +21,26 @@ npm start            # http://localhost:3000
 
 Open the page, enter your name and click **Start a theater**, then send the invite link (🔗 chip, top right).
 
-> Browsers allow camera, microphone and screen capture only on `https://` or `localhost`. To use it across the internet, deploy behind HTTPS (see **Deploying**).
+## Watching with friends
+
+Browsers allow camera, microphone and screen sharing only on `https://` addresses or on `localhost`. A plain `http://192.168.x.x` link still lets a friend watch and chat, but their camera and mic stay off (the app says so on the join screen).
+
+**Same Wi-Fi.** Start the server in HTTPS mode:
+
+```bash
+npm run start:https
+```
+
+It prints a link for every network address, such as `https://192.168.1.20:3000`. Send that link to your friends. The certificate is self-signed, so each device shows a warning once: choose **Advanced → Proceed**. The certificate is saved in `.cert/` and covers all of this machine's LAN addresses, so the warning doesn't come back after a restart.
+
+**Different networks (over the internet).** Your `localhost` isn't reachable from outside. Either deploy the server (see **Deploying**) or open a free HTTPS tunnel to it. For example, with [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/):
+
+```bash
+npm start
+cloudflared tunnel --url http://localhost:3000   # prints an https://….trycloudflare.com link to share
+```
+
+If a friend's camera connects but no video arrives, one of you is behind a strict NAT. Set up a TURN server (see **Configuration**).
 
 ## Four ways to watch
 

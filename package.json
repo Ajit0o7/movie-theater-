@@ -6,6 +6,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
+    "start:https": "node server/index.js --https",
     "dev": "node --watch server/index.js",
     "test": "node --test test/*.test.js"
   },
@@ -15,6 +16,7 @@
   "license": "MIT",
   "dependencies": {
     "express": "^5.1.0",
+    "selfsigned": "^5.5.0",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

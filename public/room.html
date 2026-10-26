@@ -158,6 +158,10 @@
         <label class="toggle"><input type="checkbox" id="join-cam" checked><span>Camera on</span></label>
         <label class="toggle"><input type="checkbox" id="join-mic" checked><span>Mic on</span></label>
       </div>
+      <div class="notice" id="insecure-note" hidden>
+        <strong>Camera, mic and screen sharing are off on this address.</strong>
+        <span>Browsers only allow them on <code>https://</code> or <code>localhost</code>. You can still watch, chat and react. The host can fix this by running <code>npm run start:https</code> and sending you the https:// link.</span>
+      </div>
       <p class="form-error" id="join-error" role="alert"></p>
       <button class="btn btn-primary btn-lg" type="submit" id="join-submit">Enter theater</button>
     </form>
@@ -192,7 +196,8 @@
         <section class="source-card" id="screen-card">
           <h3><svg class="icon"><use href="#i-screen"/></svg>Share screen or tab</h3>
           <p>Capture a tab or screen at the quality chosen below, with stereo tab audio. Tick <em>Share tab audio</em> in the browser prompt.</p>
-          <button class="btn btn-ghost" data-action="share-screen">Share…</button>
+          <button class="btn btn-ghost" data-action="share-screen" id="share-screen-btn">Share…</button>
+          <p class="hint" id="screen-insecure" hidden>Needs an <code>https://</code> address (or localhost). Ask the host to run <code>npm run start:https</code>.</p>
         </section>
       </div>
       <div class="quality-row">

@@ -61,7 +61,20 @@ let statsOpen = false;
 $('#room-code').textContent = roomId;
 $('#join-room-code').textContent = roomId;
 $('#join-name').value = storage.get('cinema.name', '');
-if (!canShareScreen()) $('#screen-card').hidden = true;
+// Camera, mic and screen capture only exist on secure origins (https or localhost). Say so
+// up front instead of failing with a vague error after the user clicks.
+const secure = window.isSecureContext;
+if (!secure) {
+  $('#insecure-note').hidden = false;
+  for (const id of ['#join-cam', '#join-mic']) {
+    $(id).checked = false;
+    $(id).disabled = true;
+  }
+  $('#share-screen-btn').disabled = true;
+  $('#screen-insecure').hidden = false;
+} else if (!canShareScreen()) {
+  $('#screen-card').hidden = true; // e.g. mobile browsers
+}
 
 const joinDialog = $('#join-dialog');
 joinDialog.addEventListener('cancel', (e) => e.preventDefault());
@@ -103,34 +116,42 @@ $('#join-form').addEventListener('submit', async (e) => {
   }
 });
 
+const CONNECT_TIMEOUT_MS = 10_000;
+
 function connect() {
   return new Promise((resolve, reject) => {
-    socket = io({ transports: ['websocket', 'polling'] });
+    // Socket.io's default transport order: start on HTTP long-polling, then upgrade to a
+    // WebSocket when one works. Networks that block or break WebSockets (antivirus web
+    // shields, corporate/school proxies, some mobile carriers) still connect over polling.
+    socket = io();
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(giveUp);
+      socket.disconnect();
+      reject(err);
+    };
+    // A single failed attempt is not fatal: Socket.io keeps retrying in the background.
+    const giveUp = setTimeout(() => fail(new Error('Can’t reach the server. Check the address and your connection.')), CONNECT_TIMEOUT_MS);
+
     socket.on('connect', async () => {
       try {
         await joinRoom();
         if (joinedOnce) toast('Reconnected', { tone: 'success' });
         joinedOnce = true;
+        settled = true;
+        clearTimeout(giveUp);
         resolve();
       } catch (err) {
-        if (!joinedOnce) {
-          socket.disconnect();
-          reject(err);
-        } else {
-          toast(err.message, { tone: 'error' });
-        }
+        if (!joinedOnce) fail(err);
+        else toast(err.message, { tone: 'error' });
       }
     });
     socket.on('disconnect', (reason) => {
       if (!joinedOnce) return;
       teardownSession();
       if (reason !== 'io client disconnect') toast('Connection lost. Reconnecting…', { tone: 'error', duration: 4000 });
-    });
-    socket.on('connect_error', () => {
-      if (!joinedOnce) {
-        socket.disconnect();
-        reject(new Error('Can’t reach the server.'));
-      }
     });
   });
 }
@@ -349,6 +370,7 @@ function toggleCam() {
 }
 
 function mediaError(err, what) {
+  if (!navigator.mediaDevices) return `The ${what} needs an https:// address (or localhost). Ask the host to run “npm run start:https”.`;
   if (err?.name === 'NotAllowedError') return `Permission to use the ${what} was denied.`;
   if (err?.name === 'NotFoundError') return `No ${what} found.`;
   return `Couldn’t start the ${what}.`;

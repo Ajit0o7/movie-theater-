@@ -64,6 +64,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .field input:focus, .join-row input:focus, .inline-form input:focus, .composer input:focus {
   border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.25);
 }
+.notice { display: grid; gap: 4px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.08); font-size: 13px; line-height: 1.5; color: #fde68a; }
+.notice span { color: var(--text-dim); }
+.toggle input:disabled, .toggle input:disabled + span { opacity: 0.45; cursor: not-allowed; }
 .form-error { min-height: 1.2em; margin: 0; color: #fda4af; font-size: 13px; }
 
 :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
