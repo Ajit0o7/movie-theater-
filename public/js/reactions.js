@@ -21,10 +21,12 @@ export class Reactions {
         h('button', { class: 'reaction-btn', 'data-emoji': emoji, title: `${emoji} (${i + 1})`, text: emoji }),
       ),
     );
-    this.tray.addEventListener('click', (e) => {
+    // Removed in destroy(): a new Reactions is built on every (re)connect.
+    this.onTrayClick = (e) => {
       const btn = e.target.closest('[data-emoji]');
       if (btn) this.send(btn.dataset.emoji);
-    });
+    };
+    this.tray.addEventListener('click', this.onTrayClick);
 
     this.onReaction = ({ emoji, name }) => this.spawn(emoji, name);
     socket.on('reaction', this.onReaction);
@@ -71,5 +73,6 @@ export class Reactions {
 
   destroy() {
     this.socket.off('reaction', this.onReaction);
+    this.tray.removeEventListener('click', this.onTrayClick);
   }
 }

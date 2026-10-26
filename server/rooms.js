@@ -35,7 +35,16 @@ export function sanitizeName(name) {
 }
 
 function emptySource() {
-  return { type: 'none', url: null, name: null, ownerId: null, duration: null };
+  return { id: null, type: 'none', url: null, name: null, ownerId: null, duration: null };
+}
+
+/**
+ * Every source gets a unique id so clients can tell "the same file/screen started again"
+ * apart from "nothing changed". The owner may propose the id (it has to recognise its own
+ * pending media before the server's confirmation arrives); otherwise the server makes one.
+ */
+function sourceId(proposed) {
+  return typeof proposed === 'string' && /^[\w-]{6,64}$/.test(proposed) ? proposed : randomBytes(9).toString('base64url');
 }
 
 export function createRoom(id, now = Date.now()) {
@@ -74,11 +83,27 @@ export function snapshotPlayback(playback, now = Date.now()) {
   };
 }
 
-export function addParticipant(room, id, name, now = Date.now()) {
+export const isValidClientId = (id) => typeof id === 'string' && /^[\w-]{6,64}$/.test(id);
+
+/** The participant (if any) that an earlier connection of the same browser tab created. */
+export function findByClientId(room, clientId) {
+  if (!isValidClientId(clientId)) return null;
+  for (const p of room.participants.values()) if (p.clientId === clientId) return p;
+  return null;
+}
+
+export function addParticipant(room, id, name, now = Date.now(), clientId = null) {
   if (room.participants.size >= MAX_PARTICIPANTS) {
     throw new RoomError('ROOM_FULL', `Room is full (max ${MAX_PARTICIPANTS} people).`);
   }
-  const participant = { id, name: sanitizeName(name), joinedAt: now, media: {}, status: { camera: false, mic: false } };
+  const participant = {
+    id,
+    clientId: isValidClientId(clientId) ? clientId : null, // private: never sent to other clients
+    name: sanitizeName(name),
+    joinedAt: now,
+    media: {},
+    status: { camera: false, mic: false },
+  };
   room.participants.set(id, participant);
   return participant;
 }
@@ -151,6 +176,7 @@ export function setSource(room, actorId, input, now = Date.now()) {
       duration: validDuration(input.duration),
     };
   }
+  if (type !== 'none') source.id = sourceId(input.id);
   room.playback = {
     source,
     playing: false,

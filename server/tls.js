@@ -24,8 +24,9 @@ function covers(certPem, hosts) {
   try {
     const cert = new X509Certificate(certPem);
     if (new Date(cert.validTo).getTime() - Date.now() < RENEW_BEFORE_MS) return false;
-    const san = cert.subjectAltName ?? '';
-    return hosts.every((h) => san.includes(/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `IP Address:${h}` : `DNS:${h}`));
+    // Exact entries: a substring test would let "IP Address:192.168.1.2" match ".20".
+    const san = new Set((cert.subjectAltName ?? '').split(/,\s*/));
+    return hosts.every((h) => san.has(/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `IP Address:${h}` : `DNS:${h}`));
   } catch {
     return false;
   }

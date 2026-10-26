@@ -50,6 +50,38 @@ const local = {
 };
 
 let socket = null;
+
+// Identifies this browser tab across reconnects, so after a Wi-Fi switch or laptop sleep the
+// server can drop our old, not-yet-timed-out connection instead of showing a ghost copy of us.
+const makeClientId = () => `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+let clientId = (() => {
+  try {
+    let id = sessionStorage.getItem('cinema.clientId');
+    if (!id) sessionStorage.setItem('cinema.clientId', (id = makeClientId()));
+    return id;
+  } catch {
+    return makeClientId();
+  }
+})();
+// "Duplicate tab" copies sessionStorage. If another open tab already uses this id, take a
+// new one, otherwise the two tabs would replace each other's connection.
+try {
+  const tabs = new BroadcastChannel('cinema-tabs');
+  tabs.onmessage = ({ data }) => {
+    if (data?.type === 'probe' && data.id === clientId) tabs.postMessage({ type: 'taken', id: clientId });
+    else if (data?.type === 'taken' && data.id === clientId) {
+      clientId = makeClientId();
+      try {
+        sessionStorage.setItem('cinema.clientId', clientId);
+      } catch {
+        /* storage unavailable */
+      }
+    }
+  };
+  tabs.postMessage({ type: 'probe', id: clientId });
+} catch {
+  /* BroadcastChannel unavailable */
+}
 let iceServers = [];
 let session = null; // per-connection: { selfId, rtc, sync, chat, reactions, peers, remoteStreams }
 let joinedOnce = false;
@@ -125,6 +157,7 @@ function connect() {
     // shields, corporate/school proxies, some mobile carriers) still connect over polling.
     socket = io();
     let settled = false;
+    let replaced = false;
     const fail = (err) => {
       if (settled) return;
       settled = true;
@@ -137,7 +170,7 @@ function connect() {
 
     socket.on('connect', async () => {
       try {
-        await joinRoom();
+        if (!(await joinRoom())) return; // superseded by a newer connection
         if (joinedOnce) toast('Reconnected', { tone: 'success' });
         joinedOnce = true;
         settled = true;
@@ -148,17 +181,28 @@ function connect() {
         else toast(err.message, { tone: 'error' });
       }
     });
+    socket.on('session:replaced', () => (replaced = true));
     socket.on('disconnect', (reason) => {
       if (!joinedOnce) return;
       teardownSession();
-      if (reason !== 'io client disconnect') toast('Connection lost. Reconnecting…', { tone: 'error', duration: 4000 });
+      if (replaced) toast('You joined this room from another tab or connection. Reload this page to watch here.', { tone: 'warn', duration: 15000 });
+      else if (reason !== 'io client disconnect') toast('Connection lost. Reconnecting…', { tone: 'error', duration: 4000 });
     });
   });
 }
 
+// Each (re)connect starts a join; on a flapping connection a newer one can start while an
+// older one is still calibrating. Only the latest may build the session.
+let joinGeneration = 0;
+
+/** Returns false when a newer connection superseded this join attempt. */
 async function joinRoom() {
+  const generation = ++joinGeneration;
+  const socketId = socket.id;
+  const stale = () => generation !== joinGeneration || socket.id !== socketId || !socket.connected;
   const clock = new ClockSync(socket);
   await clock.calibrate();
+  if (stale()) return false;
 
   // Build the session *before* joining so no signal/presence event that follows the
   // join ack can slip past unhandled.
@@ -172,6 +216,11 @@ async function joinRoom() {
   session = { selfId, self: { id: selfId, name: local.name }, rtc, sync, chat, reactions, peers: new Map(), remoteStreams: new Map(), handlers: [] };
 
   rtc.addEventListener('track', ({ detail }) => onRemoteTrack(detail));
+  rtc.addEventListener('state', ({ detail: { peerId, state } }) => {
+    if (state !== 'failed') return;
+    const name = session?.peers.get(peerId)?.name ?? 'someone';
+    toast(`Couldn’t connect directly to ${name}, so their camera, voice and streams won’t come through. A firewall or strict network is blocking it; a TURN server fixes this (see README).`, { tone: 'error', duration: 10000 });
+  });
   sync.addEventListener('state', ({ detail }) => onSyncState(detail));
   sync.addEventListener('blocked', ({ detail }) => ($('#unblock').hidden = !detail.blocked));
 
@@ -197,7 +246,8 @@ async function joinRoom() {
     reconcilePeer(peerId);
   });
 
-  const res = await new Promise((resolve) => socket.timeout(8000).emit('room:join', { roomId, name: local.name }, (err, r) => resolve(err ? { error: 'Server did not respond.' } : r)));
+  const res = await new Promise((resolve) => socket.timeout(8000).emit('room:join', { roomId, name: local.name, clientId }, (err, r) => resolve(err ? { error: 'Server did not respond.' } : r)));
+  if (stale()) return false;
   if (res.error) {
     teardownSession();
     throw new Error(res.error);
@@ -219,6 +269,7 @@ async function joinRoom() {
   chat.load(res.chat);
   sync.setInitialState(res.playback);
   renderPeople();
+  return true;
 }
 
 function on(event, handler) {
@@ -322,10 +373,25 @@ function refreshSelfTile() {
   tile.setStream(local.camTrack ? new MediaStream([local.camTrack]) : null);
 }
 
-async function enableCamera({ quiet = false } = {}) {
+// One getUserMedia at a time per device: a double-click on the camera button, or retrying
+// the join after an error, used to open a second camera track and leak the first (the
+// camera light stayed on after turning the camera off).
+let cameraPending = null;
+let micPending = null;
+
+function enableCamera(opts) {
+  cameraPending ??= startCamera(opts).finally(() => (cameraPending = null));
+  return cameraPending;
+}
+
+async function startCamera({ quiet = false } = {}) {
+  if (local.camTrack?.readyState === 'live') return;
   try {
-    local.camTrack = await getCameraTrack();
-    local.camTrack.addEventListener('ended', () => disableCamera());
+    const track = await getCameraTrack();
+    track.addEventListener('ended', () => {
+      if (local.camTrack === track) disableCamera(); // e.g. camera unplugged
+    });
+    local.camTrack = track;
   } catch (err) {
     if (!quiet) toast(mediaError(err, 'camera'), { tone: 'error' });
     local.camTrack = null;
@@ -343,7 +409,13 @@ async function disableCamera() {
   publishStatus();
 }
 
-async function enableMic({ quiet = false } = {}) {
+function enableMic(opts) {
+  micPending ??= startMic(opts).finally(() => (micPending = null));
+  return micPending;
+}
+
+async function startMic({ quiet = false } = {}) {
+  if (local.micTrack?.readyState === 'live') return;
   try {
     local.micTrack = await getMicTrack();
     detector.watch('self', local.micTrack, (level) => {
@@ -366,6 +438,7 @@ function toggleMic() {
 }
 
 function toggleCam() {
+  if (cameraPending) return cameraPending; // still starting: ignore the extra click
   return local.camTrack ? disableCamera() : enableCamera();
 }
 
@@ -379,7 +452,9 @@ function mediaError(err, what) {
 // ---------------------------------------------------------------------------
 // Sources
 
-const sourceKey = (s) => `${s.type}|${s.ownerId}|${s.name}|${s.url}`;
+const sourceKey = (s) => `${s.type}|${s.id}`;
+// crypto.randomUUID only exists on secure origins; plain-http LAN guests need ids too.
+const newSourceId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 const sourceDialog = $('#source-dialog');
 
 async function setSource(input) {
@@ -393,8 +468,9 @@ async function setSource(input) {
   return true;
 }
 
-function plannedKey(type, name, url = null) {
-  return sourceKey({ type, ownerId: session.selfId, name, url });
+/** The key our own media will have once the server confirms the source with this id. */
+function plannedKey(type, id) {
+  return sourceKey({ type, id });
 }
 
 $('#url-form').addEventListener('submit', async (e) => {
@@ -403,7 +479,7 @@ $('#url-form').addEventListener('submit', async (e) => {
   const youtube = parseYouTubeUrl(url);
   if (youtube) {
     releaseOwnMedia();
-    if (await setSource({ type: 'youtube', videoId: youtube.videoId, name: 'YouTube video' })) {
+    if (await setSource({ type: 'youtube', id: newSourceId(), videoId: youtube.videoId, name: 'YouTube video' })) {
       $('#url-input').value = '';
       if (youtube.start) session.sync.seek(youtube.start);
     }
@@ -416,7 +492,7 @@ $('#url-form').addEventListener('submit', async (e) => {
     /* keep raw url */
   }
   releaseOwnMedia();
-  if (await setSource({ type: 'url', url, name })) $('#url-input').value = '';
+  if (await setSource({ type: 'url', id: newSourceId(), url, name })) $('#url-input').value = '';
 });
 
 $('#stream-file').addEventListener('change', async (e) => {
@@ -428,8 +504,9 @@ $('#stream-file').addEventListener('change', async (e) => {
     return;
   }
   releaseOwnMedia();
-  local.own = { key: plannedKey('stream', file.name), type: 'stream', url: URL.createObjectURL(file), pending: true };
-  if (!(await setSource({ type: 'stream', name: file.name }))) releaseOwnMedia();
+  const id = newSourceId();
+  local.own = { key: plannedKey('stream', id), type: 'stream', url: URL.createObjectURL(file), pending: true };
+  if (!(await setSource({ type: 'stream', id, name: file.name }))) releaseOwnMedia();
 });
 
 $('#local-file').addEventListener('change', async (e) => {
@@ -437,8 +514,9 @@ $('#local-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file || !session) return;
   releaseOwnMedia();
-  setLocalCopy(plannedKey('local', file.name), file, true);
-  if (!(await setSource({ type: 'local', name: file.name })) && local.localCopy?.pending) {
+  const id = newSourceId();
+  setLocalCopy(plannedKey('local', id), file, true);
+  if (!(await setSource({ type: 'local', id, name: file.name })) && local.localCopy?.pending) {
     URL.revokeObjectURL(local.localCopy.url);
     local.localCopy = null;
   }
@@ -471,7 +549,8 @@ async function shareScreen() {
   releaseOwnMedia();
   const video = display.getVideoTracks()[0];
   const name = video?.label || 'Screen share';
-  local.own = { key: plannedKey('screen', name), type: 'screen', display, pending: true };
+  const id = newSourceId();
+  local.own = { key: plannedKey('screen', id), type: 'screen', display, pending: true };
   video?.addEventListener('ended', () => {
     if (local.own?.display === display) setSource({ type: 'none' });
   });
@@ -480,7 +559,7 @@ async function shareScreen() {
   }
   await session.rtc.setTrack('movieVideo', video ?? null);
   await session.rtc.setTrack('movieAudio', display.getAudioTracks()[0] ?? null);
-  if (!(await setSource({ type: 'screen', name }))) releaseOwnMedia();
+  if (!(await setSource({ type: 'screen', id, name }))) releaseOwnMedia();
 }
 
 /** Stops whatever this client was broadcasting (screen or streamed file). */
@@ -501,6 +580,7 @@ function releaseOwnMedia() {
 }
 
 function clearPlayer() {
+  $('#unblock').hidden = true;
   player.pause();
   player.srcObject = null;
   player.removeAttribute('src');
@@ -516,13 +596,19 @@ function loadPlayer(key, { src = null, srcObject = null, muted = false }) {
   if (srcObject) {
     player.removeAttribute('src');
     player.srcObject = srcObject;
-    player.play().catch(() => ($('#unblock').hidden = false));
+    // Only an autoplay block needs the tap-to-play overlay; an AbortError just means the
+    // stream was replaced or torn down while starting (e.g. the host left).
+    player.play().catch((err) => {
+      if (err?.name === 'NotAllowedError' && player.srcObject === srcObject) $('#unblock').hidden = false;
+    });
   } else {
     player.srcObject = null;
     player.src = src;
     player.load();
   }
 }
+
+let waitingTimer = null;
 
 /** Points the <video> at the right thing for the current room source. */
 function renderSource() {
@@ -584,8 +670,14 @@ function renderSource() {
           loadPlayer(`${key}|${stream.id}`, { srcObject: stream });
         } else {
           clearPlayer();
-          $('#waiting-stream-title').textContent = `Connecting to ${ownerName(source.ownerId)}’s stream…`;
+          const title = $('#waiting-stream-title');
+          title.textContent = `Connecting to ${ownerName(source.ownerId)}’s stream…`;
           show('#waiting-stream');
+          clearTimeout(waitingTimer);
+          waitingTimer = setTimeout(() => {
+            if ($('#waiting-stream').hidden || session?.sync.source.id !== source.id) return;
+            title.textContent = `Still connecting to ${ownerName(source.ownerId)}’s stream. If this doesn’t change, a firewall may be blocking direct connections (see “TURN server” in the README).`;
+          }, 15000);
         }
       }
       break;
@@ -623,6 +715,21 @@ function unmountYouTube() {
   player.hidden = false;
   session?.sync.setVideo(player);
 }
+
+// A file or link that can't play used to leave a silent black screen.
+player.addEventListener('error', () => {
+  const source = session?.sync.source;
+  if (!player.currentSrc || !source || !['url', 'local', 'stream'].includes(source.type)) return;
+  const code = player.error?.code;
+  // Chrome reports a 404 link as "format not supported", so links get one message for both.
+  const message =
+    source.type === 'url'
+      ? 'Couldn’t play that link. It must be a direct, public link to a video file (.mp4 or .webm) in a format this browser supports. For YouTube, paste the YouTube link.'
+      : code === MediaError.MEDIA_ERR_NETWORK
+        ? 'Reading the video file failed.'
+        : 'This browser can’t play that video (unsupported format or codec). MP4 with H.264 + AAC, or WebM, plays everywhere; MKV files often have audio this browser can’t decode.';
+  toast(message, { tone: 'error', duration: 9000 });
+});
 
 /** When we are streaming a file, capture the player as soon as media is ready. */
 player.addEventListener('loadedmetadata', () => {

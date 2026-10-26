@@ -19,6 +19,10 @@ test('self-signed cert covers the LAN IPs, is cached, and is regenerated when an
     assert.equal(again.created, false, 'reuses the cached cert so the browser exception keeps working');
     assert.equal(again.cert, first.cert);
 
+    const prefix = await loadOrCreateCert(dir, ['localhost', '127.0.0.1', '192.168.1.2']);
+    assert.equal(prefix.created, true, 'a cert for .20 must not be reused for .2');
+    await loadOrCreateCert(dir, ['localhost', '127.0.0.1', '192.168.1.20']);
+
     const moved = await loadOrCreateCert(dir, ['localhost', '127.0.0.1', '10.0.0.7']);
     assert.equal(moved.created, true, 'new Wi-Fi address -> new cert');
     assert.match(new X509Certificate(moved.cert).subjectAltName, /IP Address:10\.0\.0\.7/);

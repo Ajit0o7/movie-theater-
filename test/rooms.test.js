@@ -141,3 +141,12 @@ test('snapshot carries server time for client-side extrapolation', () => {
   assert.equal(snap.serverTime, 1234);
   assert.equal(snap.source.type, 'none');
 });
+
+test('restarting the same file gets a new source id, so clients reload it', () => {
+  const room = roomWith('A');
+  const first = setSource(room, 'p0', { type: 'stream', name: 'movie.mkv', id: 'client-proposed-1' });
+  const again = setSource(room, 'p0', { type: 'stream', name: 'movie.mkv' });
+  assert.equal(first.source.id, 'client-proposed-1');
+  assert.ok(again.source.id && again.source.id !== first.source.id);
+  assert.notEqual(setSource(room, 'p0', { type: 'stream', name: 'x', id: '<bad id>' }).source.id, '<bad id>');
+});

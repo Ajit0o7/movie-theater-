@@ -12,15 +12,19 @@ export class ChatDrawer {
     this.input = $('#chat-input');
     this.badge = $('#chat-badge');
     this.unread = 0;
-    this.open = false;
+    this.open = this.drawer.classList.contains('open'); // survives a reconnect
 
-    $('#composer').addEventListener('submit', (e) => {
+    // DOM listeners must be removed in destroy(): a new ChatDrawer is built on every
+    // (re)connect, and a leftover listener would send each message once more per reconnect.
+    this.composer = $('#composer');
+    this.onSubmit = (e) => {
       e.preventDefault();
       const text = this.input.value.trim();
       if (!text) return;
       socket.emit('chat:send', { text });
       this.input.value = '';
-    });
+    };
+    this.composer.addEventListener('submit', this.onSubmit);
 
     this.onMessage = (m) => this.append(m, true);
     socket.on('chat:message', this.onMessage);
@@ -80,5 +84,6 @@ export class ChatDrawer {
 
   destroy() {
     this.socket.off('chat:message', this.onMessage);
+    this.composer.removeEventListener('submit', this.onSubmit);
   }
 }

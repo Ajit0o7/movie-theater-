@@ -12,6 +12,8 @@ const HARD_SEEK_THRESHOLD = 1.5; // seconds of drift before we jump
 const SOFT_DRIFT_THRESHOLD = 0.25; // seconds of drift before we nudge playbackRate
 const NUDGE = 0.05;
 const COARSE_SEEK_THRESHOLD = 0.8; // players without fine playbackRate (YouTube) seek past this
+const HARD_SEEK_COOLDOWN_MS = 4000;
+const MAX_SEEK_LEAD = 6; // seconds
 
 export class ClockSync {
   constructor(socket) {
@@ -48,6 +50,10 @@ export class CinemaSync extends EventTarget {
     this.state = null;
     this.blocked = false;
     this.heartbeatTimer = null;
+    // How long a catch-up seek takes to become playable on this connection. Catch-up seeks
+    // aim that far ahead, so a slow connection doesn't land behind again and seek forever.
+    this.seekLead = 0;
+    this.lastHardSeek = 0;
     this.driftTimer = setInterval(() => this.#correctDrift(), 1000);
 
     this.onState = ({ playback, actor, actorId, action }) => {
@@ -223,13 +229,30 @@ export class CinemaSync extends EventTarget {
     const abs = Math.abs(drift);
     // YouTube only supports coarse rates, so it can't be nudged; it just seeks on big drift.
     if (abs > HARD_SEEK_THRESHOLD || (this.video.supportsRateNudge === false && abs > COARSE_SEEK_THRESHOLD)) {
-      this.video.currentTime = this.expectedTime();
-      this.video.playbackRate = 1;
+      this.#catchUpSeek();
     } else if (abs > SOFT_DRIFT_THRESHOLD && this.video.supportsRateNudge !== false) {
       this.video.playbackRate = drift > 0 ? 1 - NUDGE : 1 + NUDGE;
     } else if (this.video.playbackRate !== 1) {
       this.video.playbackRate = 1;
     }
+  }
+
+  #catchUpSeek() {
+    const started = performance.now();
+    if (started - this.lastHardSeek < HARD_SEEK_COOLDOWN_MS) return;
+    this.lastHardSeek = started;
+    const video = this.video;
+    video.playbackRate = 1;
+    video.currentTime = this.expectedTime() + this.seekLead;
+    const measure = () => {
+      if (this.video !== video) return;
+      if (video.seeking || video.readyState < 3) {
+        if (performance.now() - started < 15000) setTimeout(measure, 100);
+        return;
+      }
+      this.seekLead = Math.min(MAX_SEEK_LEAD, (performance.now() - started) / 1000);
+    };
+    setTimeout(measure, 100);
   }
 
   #reportDuration() {
@@ -256,10 +279,15 @@ export class CinemaSync extends EventTarget {
     } else if (!shouldBeat && this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    // How long a catch-up seek takes to become playable on this connection. Catch-up seeks
+    // aim that far ahead, so a slow connection doesn't land behind again and seek forever.
+    this.seekLead = 0;
+    this.lastHardSeek = 0;
     }
   }
 }
 
 function sameSource(a, b) {
-  return a.type === b.type && a.url === b.url && a.ownerId === b.ownerId && a.name === b.name;
+  // Ids are unique per start, so re-sharing the same screen or file counts as a change.
+  return a.id === b.id && a.type === b.type;
 }

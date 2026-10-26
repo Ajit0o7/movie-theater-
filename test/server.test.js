@@ -122,3 +122,36 @@ test('rejects invalid room ids', async () => {
   const res = await emit(s, 'room:join', { roomId: '../../etc', name: 'x' });
   assert.match(res.error, /Invalid/);
 });
+
+test('malformed client messages never crash the server', async () => {
+  const s = await client();
+  const events = ['room:join', 'signal', 'media:announce', 'peer:status', 'sync:source', 'sync:event', 'sync:heartbeat', 'chat:send', 'reaction', 'time:ping'];
+  for (const event of events) {
+    for (const payload of [null, undefined, 42, 'x', [], { roomId: 7 }]) s.emit(event, payload);
+    s.emit(event, null, 5); // non-function "ack"
+  }
+  await emit(s, 'room:join', { roomId: 'sturdy', name: 'A' }); // and the same socket can still join
+  for (const event of events) s.emit(event, null);
+  await new Promise((r) => setTimeout(r, 200));
+  const res = await fetch(`${baseUrl}/healthz`);
+  assert.equal(res.status, 200);
+});
+
+test('a reconnect from the same tab replaces its old connection instead of leaving a ghost', async () => {
+  const friend = await client();
+  await emit(friend, 'room:join', { roomId: 'ghosts', name: 'Friend' });
+  const oldConn = await client();
+  await emit(oldConn, 'room:join', { roomId: 'ghosts', name: 'Ajit', clientId: 'tab-123456' });
+  await emit(oldConn, 'sync:source', { type: 'screen', name: 'Tab' });
+  const oldId = oldConn.id; // socket.io-client clears .id once disconnected
+
+  const replaced = once(oldConn, 'session:replaced');
+  const left = once(friend, 'peer:left');
+  const newConn = await client(); // e.g. after a Wi-Fi switch, before the old socket timed out
+  const join = await emit(newConn, 'room:join', { roomId: 'ghosts', name: 'Ajit', clientId: 'tab-123456' });
+  await replaced;
+  assert.equal((await left).id, oldId);
+  assert.deepEqual(join.peers.map((p) => p.name), ['Friend'], 'no ghost copy of Ajit');
+  assert.equal(join.playback.source.type, 'none', "the ghost's screen share was cleared");
+  assert.equal(join.self.clientId, undefined, 'client ids stay private');
+});

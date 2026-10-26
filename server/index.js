@@ -15,6 +15,7 @@ import {
   applyHeartbeat,
   applySyncEvent,
   createRoom,
+  findByClientId,
   generateRoomId,
   isValidReaction,
   isValidRoomId,
@@ -90,19 +91,52 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
     cleanupTimers.set(room.id, timer);
   }
 
+  /** Removes a participant whose connection was superseded, and tells everyone. */
+  function evict(target, oldId) {
+    const old = io.sockets.sockets.get(oldId);
+    if (old) {
+      old.emit('session:replaced');
+      old.disconnect(true); // its own disconnect handler removes it and notifies the room
+    }
+    if (target.participants.has(oldId)) {
+      const { participant, sourceCleared } = removeParticipant(target, oldId);
+      io.to(target.id).emit('peer:left', { id: oldId, name: participant?.name });
+      if (sourceCleared) io.to(target.id).emit('sync:state', { playback: snapshotPlayback(target.playback), actor: participant?.name, action: 'SOURCE' });
+    }
+  }
+
   io.on('connection', (socket) => {
     let room = null;
     const self = () => room?.participants.get(socket.id);
 
-    // Lightweight NTP-style clock sync so clients can convert server timestamps.
-    socket.on('time:ping', (ack) => typeof ack === 'function' && ack(Date.now()));
+    // Every client message goes through here: payloads may be null or not objects and the
+    // ack may be missing or not a function. An exception in a Socket.io handler is uncaught
+    // and would kill the process (every room), so handlers never throw past this point.
+    const on = (event, handler) =>
+      socket.on(event, (...args) => {
+        const last = args.at(-1);
+        const ack = typeof last === 'function' ? args.pop() : () => {};
+        const payload = args[0] !== null && typeof args[0] === 'object' ? args[0] : {};
+        try {
+          handler(payload, ack);
+        } catch (err) {
+          console.error(`[socket] "${event}" from ${socket.id} failed:`, err);
+        }
+      });
 
-    socket.on('room:join', ({ roomId, name } = {}, ack = () => {}) => {
+    // Lightweight NTP-style clock sync so clients can convert server timestamps.
+    on('time:ping', (_payload, ack) => ack(Date.now()));
+
+    on('room:join', ({ roomId, name, clientId }, ack) => {
       if (room) return ack({ error: 'Already in a room.' });
       if (!isValidRoomId(roomId)) return ack({ error: 'Invalid room id.' });
       const target = getOrCreateRoom(roomId.toLowerCase());
+      // Same tab reconnecting (Wi-Fi switch, sleep) before the server noticed the old
+      // connection died: drop the old one now, or it lingers as a ghost for ~45s.
+      const previous = findByClientId(target, clientId);
+      if (previous && previous.id !== socket.id) evict(target, previous.id);
       try {
-        const participant = addParticipant(target, socket.id, name);
+        const participant = addParticipant(target, socket.id, name, Date.now(), clientId);
         room = target;
         socket.join(room.id);
         socket.to(room.id).emit('peer:joined', publicParticipant(participant));
@@ -119,23 +153,23 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
     });
 
     // WebRTC signaling relay (SDP descriptions + ICE candidates), scoped to the room.
-    socket.on('signal', ({ to, data } = {}) => {
+    on('signal', ({ to, data }) => {
       if (!room || !room.participants.has(to) || to === socket.id) return;
       io.to(to).emit('signal', { from: socket.id, data });
     });
 
-    socket.on('media:announce', ({ streamId, kind } = {}) => {
+    on('media:announce', ({ streamId, kind }) => {
       if (!room || !setMedia(room, socket.id, streamId, kind ?? null)) return;
       socket.to(room.id).emit('media:announce', { peerId: socket.id, streamId, kind: kind ?? null });
     });
 
-    socket.on('peer:status', (status) => {
+    on('peer:status', (status) => {
       if (!room) return;
       const next = setStatus(room, socket.id, status);
       if (next) socket.to(room.id).emit('peer:status', { id: socket.id, status: next });
     });
 
-    socket.on('sync:source', (input, ack = () => {}) => {
+    on('sync:source', (input, ack) => {
       if (!room) return ack({ error: 'Not in a room.' });
       try {
         const playback = setSource(room, socket.id, input);
@@ -146,7 +180,7 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
       }
     });
 
-    socket.on('sync:event', (event) => {
+    on('sync:event', (event) => {
       if (!room) return;
       const playback = applySyncEvent(room, socket.id, event);
       if (!playback) return;
@@ -154,19 +188,19 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
       io.to(room.id).emit('sync:state', { playback, actor: self()?.name, actorId: socket.id, action: event.action });
     });
 
-    socket.on('sync:heartbeat', (beat) => {
+    on('sync:heartbeat', (beat) => {
       if (!room) return;
       const playback = applyHeartbeat(room, socket.id, beat);
       if (playback) socket.to(room.id).emit('sync:state', { playback, action: 'HEARTBEAT' });
     });
 
-    socket.on('chat:send', ({ text } = {}) => {
+    on('chat:send', ({ text }) => {
       if (!room) return;
       const message = addChatMessage(room, socket.id, text);
       if (message) io.to(room.id).emit('chat:message', message);
     });
 
-    socket.on('reaction', ({ emoji } = {}) => {
+    on('reaction', ({ emoji }) => {
       if (!room || !isValidReaction(emoji)) return;
       io.to(room.id).emit('reaction', { emoji, from: socket.id, name: self()?.name });
     });

@@ -25,23 +25,30 @@ const SLOTS = {
 
 /**
  * Raises Opus to full-band stereo. `stereo=1` in an SDP tells the *remote* encoder it may
- * send stereo, so this is applied to both offers and answers.
+ * send stereo, so this is applied to both offers and answers, and to every audio m-section
+ * (mic and movie each have their own; the movie's is not the first one).
  */
 export function enableOpusStereo(sdp) {
-  const match = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i);
-  if (!match) return sdp;
-  const pt = match[1];
-  const fmtp = new RegExp(`a=fmtp:${pt} ([^\\r\\n]*)`);
   const extra = { stereo: '1', 'sprop-stereo': '1', maxaveragebitrate: String(MOVIE_AUDIO_BITRATE), useinbandfec: '1' };
-  if (!fmtp.test(sdp)) {
-    const params = Object.entries(extra).map(([k, v]) => `${k}=${v}`).join(';');
-    return sdp.replace(match[0], `${match[0]}\r\na=fmtp:${pt} ${params}`);
-  }
-  return sdp.replace(fmtp, (_line, existing) => {
-    const params = new Map(existing.split(';').filter(Boolean).map((p) => p.trim().split('=')));
-    for (const [k, v] of Object.entries(extra)) params.set(k, v);
-    return `a=fmtp:${pt} ${[...params].map(([k, v]) => `${k}=${v}`).join(';')}`;
-  });
+  const sections = sdp.split(/\r\n(?=m=)/);
+  return sections
+    .map((section) => {
+      if (!section.startsWith('m=audio')) return section;
+      const match = section.match(/a=rtpmap:(\d+) opus\/48000\/2/i);
+      if (!match) return section;
+      const pt = match[1];
+      const fmtp = new RegExp(`a=fmtp:${pt} ([^\\r\\n]*)`);
+      if (!fmtp.test(section)) {
+        const params = Object.entries(extra).map(([k, v]) => `${k}=${v}`).join(';');
+        return section.replace(match[0], `${match[0]}\r\na=fmtp:${pt} ${params}`);
+      }
+      return section.replace(fmtp, (_line, existing) => {
+        const params = new Map(existing.split(';').filter(Boolean).map((p) => p.trim().split('=')));
+        for (const [k, v] of Object.entries(extra)) params.set(k, v);
+        return `a=fmtp:${pt} ${[...params].map(([k, v]) => `${k}=${v}`).join(';')}`;
+      });
+    })
+    .join('\r\n');
 }
 
 /**
