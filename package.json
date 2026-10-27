@@ -8,7 +8,7 @@
     "start": "node server/index.js",
     "start:https": "node server/index.js --https",
     "dev": "node --watch server/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"

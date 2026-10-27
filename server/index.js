@@ -237,12 +237,14 @@ function isMainModule() {
 }
 
 async function main() {
-  const port = Number(process.env.PORT) || 3000;
+  // `--port` works the same on every OS; `PORT=3001 npm start` only works on macOS/Linux.
+  const portFlag = process.argv.indexOf('--port');
+  const port = Number(portFlag > -1 ? process.argv[portFlag + 1] : process.env.PORT) || 3000;
   const https = process.argv.includes('--https') || process.env.HTTPS === '1';
   const tls = https ? await loadOrCreateCert(path.join(__dirname, '..', '.cert')) : null;
   const { httpServer } = createCinemaServer({ tls });
   httpServer.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use. Close the other server or run with PORT=<another port>.`);
+    if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use. Close the other server, or use another port: npm start -- --port 3001`);
     else console.error(err);
     process.exit(1);
   });

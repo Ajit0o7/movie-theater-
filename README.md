@@ -122,7 +122,7 @@ public/
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `3000` | HTTP port |
+| `PORT` or `--port` | `3000` | HTTP port. Portable form: `npm start -- --port 3001`. In PowerShell: `$env:PORT=3001; npm start` |
 | `STUN_URLS` | Google STUN | Comma-separated STUN URLs |
 | `TURN_URLS` | — | Comma-separated TURN URLs (needed behind strict NATs/firewalls) |
 | `TURN_USERNAME` / `TURN_CREDENTIAL` | — | TURN credentials |
