@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Phone remote · 4K Virtual Cinema</title>
+  <meta name="theme-color" content="#0a0a0c">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..800&family=Outfit:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="modulepreload" href="/js/remote.js">
+  <link rel="modulepreload" href="/js/util.js">
+</head>
+<body class="remote-page">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v5h5"/><text x="12" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="system-ui,sans-serif">10</text></symbol>
+      <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><text x="12" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="system-ui,sans-serif">10</text></symbol>
+      <symbol id="i-cam" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="m15.5 10.5 6-3.5v10l-6-3.5"/></symbol>
+      <symbol id="i-flip" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.7M20 4v4.7h-4.7M20 12a8 8 0 0 1-13.7 5.6L4 15.3M4 20v-4.7h4.7"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+    </defs>
+  </svg>
+
+  <main id="remote" class="remote">
+    <header class="remote-head">
+      <span class="brand">🎬 Cinema</span>
+      <span class="remote-link" id="remote-link"><i class="dot"></i><span id="remote-status">Connecting…</span></span>
+    </header>
+
+    <section class="remote-card" id="remote-error" hidden>
+      <h1>Can’t connect</h1>
+      <p id="remote-error-text"></p>
+    </section>
+
+    <section class="remote-card" id="remote-player" hidden>
+      <p class="eyebrow" id="remote-for">Remote</p>
+      <h1 id="remote-title">Nothing playing yet</h1>
+      <div class="remote-scrub">
+        <input type="range" id="remote-seek" min="0" max="1000" value="0" aria-label="Seek">
+        <div class="remote-times"><span id="remote-time">0:00</span><span id="remote-duration">0:00</span></div>
+      </div>
+      <div class="remote-transport">
+        <button class="remote-btn" id="remote-back" aria-label="Back 10 seconds"><svg class="icon"><use href="#i-back"/></svg></button>
+        <button class="remote-btn remote-play" id="remote-play" aria-label="Play or pause"><svg class="icon"><use href="#i-play"/></svg></button>
+        <button class="remote-btn" id="remote-fwd" aria-label="Forward 10 seconds"><svg class="icon"><use href="#i-fwd"/></svg></button>
+      </div>
+      <label class="slider-field remote-volume">
+        <span><span><svg class="icon"><use href="#i-volume"/></svg> Volume on the computer</span> <output id="remote-vol-out">100%</output></span>
+        <input type="range" id="remote-vol" min="0" max="100" value="100">
+      </label>
+      <div class="remote-reactions" id="remote-reactions" aria-label="Reactions"></div>
+    </section>
+
+    <section class="remote-card" id="remote-camera" hidden>
+      <div class="remote-cam-head">
+        <div>
+          <h2>Use as webcam</h2>
+          <p class="hint" id="remote-cam-hint">Your phone’s camera becomes your camera in the room: steadier, sharper, any angle. Prop the phone up and keep this page open.</p>
+        </div>
+      </div>
+      <div class="remote-cam-preview" id="remote-cam-preview" hidden>
+        <video id="remote-cam-video" muted playsinline autoplay></video>
+        <span class="remote-cam-live" id="remote-cam-state">Connecting…</span>
+      </div>
+      <div class="remote-cam-actions">
+        <button class="btn btn-primary" id="remote-cam-start"><svg class="icon"><use href="#i-cam"/></svg> Start camera</button>
+        <button class="btn btn-ghost" id="remote-cam-flip" hidden><svg class="icon"><use href="#i-flip"/></svg> Flip</button>
+        <button class="btn btn-ghost" id="remote-cam-stop" hidden>Stop</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/remote.js"></script>
+</body>
+</html>

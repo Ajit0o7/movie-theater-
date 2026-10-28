@@ -236,16 +236,51 @@ h1, h2, h3, .brand {
 .player {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: contain; background: transparent; z-index: 1;
+  transition: transform 280ms var(--ease); /* fill / fit */
 }
 .yt-host iframe { width: 100%; height: 100%; border: 0; display: block; }
-.click-shield { position: absolute; inset: 0; z-index: 1; }
+.click-shield { position: absolute; inset: 0; z-index: 1; touch-action: none; /* taps, swipes and pinches are ours */ }
+/* Brightness (swipe on the left half): dims picture and glow without filtering the 4K video. */
+.dimmer { position: absolute; inset: 0; z-index: 1; background: #000; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+
+.gesture-hint {
+  position: absolute; top: 50%; left: 50%; z-index: 3; pointer-events: none;
+  display: flex; align-items: center; gap: 10px; padding: 11px 18px; border-radius: var(--radius-pill);
+  background: rgba(8, 8, 12, 0.66); color: #fff; font: 600 15px/1 var(--font-body); white-space: nowrap;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.8);
+  transform: translate(-50%, -50%) scale(0.92); opacity: 0; transition: opacity 180ms, transform 180ms var(--ease);
+}
+.gesture-hint.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.gesture-hint[data-side="left"] { left: 24%; }
+.gesture-hint[data-side="right"] { left: 76%; }
+.gesture-hint .icon { width: 22px; height: 22px; flex: none; }
+.gesture-meter { width: 84px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.22); overflow: hidden; }
+.gesture-meter > i { display: block; height: 100%; width: calc(var(--v) * 100%); background: var(--accent); border-radius: inherit; }
 body:not(.has-source) .click-shield { display: none; }
 
 .ambilight {
+  --feather: radial-gradient(closest-side, #000 62%, transparent 100%);
   position: absolute; left: -5%; top: -5%; width: 110%; height: 110%; z-index: 0; pointer-events: none;
   opacity: 0; transition: opacity 600ms;
+  /* Brightest next to the picture, fading toward the screen edges like light on a wall. */
+  -webkit-mask-image: var(--feather);
+  mask-image: var(--feather);
 }
 .ambilight.lit { opacity: 0.6; }
+/* The video has black bars baked in: glow in front of it, with the picture (--pic-*) cut out. */
+.ambilight.over {
+  z-index: 1;
+  -webkit-mask-image: var(--feather), linear-gradient(#000, #000);
+  mask-image: var(--feather), linear-gradient(#000, #000);
+  -webkit-mask-size: 100% 100%, var(--pic-w) var(--pic-h);
+  mask-size: 100% 100%, var(--pic-w) var(--pic-h);
+  -webkit-mask-position: 0 0, var(--pic-x) var(--pic-y);
+  mask-position: 0 0, var(--pic-x) var(--pic-y);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-composite: source-out;
+  mask-composite: subtract;
+}
 
 .stage-message {
   position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center;
@@ -473,9 +508,10 @@ body.idle .cam-tools { opacity: 0 !important; }
 .cam-tile.remote-move {
   transition: transform 180ms linear, width 220ms var(--ease), border-radius 220ms var(--ease), box-shadow 200ms, border-color 200ms;
 }
-.cam-tile.size-s { --w: 160px; }
-.cam-tile.size-m { --w: 230px; }
-.cam-tile.size-l { --w: 350px; }
+/* Capped by height too: on a landscape phone (844×390) a 230px tile covered half the movie. */
+.cam-tile.size-s { --w: min(160px, 27vh); }
+.cam-tile.size-m { --w: min(230px, 36vh); }
+.cam-tile.size-l { --w: min(350px, 54vh); }
 .cam-tile.size-min { --w: 68px; aspect-ratio: 1; border-radius: 50%; }
 .cam-tile.is-dragging {
   cursor: grabbing; transition: width 220ms var(--ease);
@@ -533,8 +569,20 @@ body.idle .cam-tools { opacity: 0 !important; }
   user-select: text; -webkit-user-select: text;
 }
 .drawer.open { transform: none; }
-.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 10px; }
 .drawer-head h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text); }
+.drawer-head .danmaku-btn { margin-left: auto; margin-right: 4px; }
+.danmaku-btn.on { background: var(--accent); color: #fff; }
+
+/* ---------- Floating chat (danmaku) ---------- */
+.danmaku-layer { position: fixed; inset: 0; z-index: 19; /* over camera tiles, under the HUD */ pointer-events: none; overflow: hidden; }
+.danmaku-item {
+  position: absolute; left: 0; white-space: nowrap; will-change: transform;
+  padding: 3px 9px; border-radius: 9px; line-height: 1.25; font-family: var(--font-body); font-weight: 700;
+  color: #fff; opacity: 0.94;
+  text-shadow: 0 0 2px #000, 0 0 3px #000, 0 1px 4px rgba(0, 0, 0, 0.9); /* readable on any picture */
+}
+.danmaku-item b { color: hsl(var(--hue) 95% 74%); margin-right: 7px; }
+.danmaku-item.mine { box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.6); }
 .icon-btn { display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 11px; background: transparent; color: var(--text); }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.1); }
 
@@ -680,6 +728,79 @@ input[type="range"]:not(.timeline-input) {
 }
 .hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.5; }
 
+.toggle-note { color: var(--text-faint); font-size: 12px; font-weight: 400; margin-left: 4px; }
+
+/* ---------- Laser pointer ---------- */
+.laser-layer { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 17; pointer-events: none; }
+body.laser-mode .click-shield { cursor: crosshair; }
+#laser-btn.on, #pip-btn.on { color: var(--accent-2); background: rgba(56, 189, 248, 0.14); }
+
+/* ---------- Timeline moments ---------- */
+.timeline-moments { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.moment-dot {
+  --heat: 0.5;
+  position: absolute; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%;
+  background: hsl(calc(45 - var(--heat) * 45) 100% 62%);
+  opacity: calc(0.35 + var(--heat) * 0.65);
+  box-shadow: 0 0 calc(4px + var(--heat) * 8px) hsl(calc(45 - var(--heat) * 45) 100% 55%);
+}
+.moment-badge {
+  position: absolute; bottom: 18px; transform: translateX(-50%); pointer-events: auto;
+  padding: 2px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border-strong);
+  background: var(--surface-strong); font-size: 15px; line-height: 1.35; cursor: pointer;
+  box-shadow: 0 4px 14px -4px rgba(0, 0, 0, 0.8); transition: transform 160ms var(--ease);
+}
+.moment-badge:hover { transform: translateX(-50%) translateY(-2px) scale(1.15); }
+
+/* ---------- Subtitles ---------- */
+.subtitles {
+  --sub-scale: 1; --sub-color: #fff; --sub-bg: 0.6; --sub-font: var(--font-body);
+  position: absolute; left: 50%; bottom: calc(var(--hud-h, 132px) + 8px); z-index: 1;
+  transform: translateX(-50%); width: min(92vw, 1400px);
+  display: flex; flex-direction: column; align-items: center; gap: 0.25em;
+  pointer-events: none; text-align: center;
+  font-family: var(--sub-font); font-weight: 600; line-height: 1.3;
+  font-size: calc(clamp(16px, 3.4vh, 44px) * var(--sub-scale));
+  transition: bottom var(--hud-fade) var(--ease);
+}
+body.idle .subtitles { bottom: 6vh; }
+.sub-cue {
+  display: inline-block; padding: 0.12em 0.45em; border-radius: 0.2em;
+  color: var(--sub-color); background: rgba(0, 0, 0, var(--sub-bg));
+  /* Outline keeps text readable even with no background over bright scenes. */
+  text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px rgba(0, 0, 0, 0.9);
+  box-decoration-break: clone; -webkit-box-decoration-break: clone; white-space: pre-line;
+}
+
+.drop-hint {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; pointer-events: none;
+  background: rgba(7, 7, 9, 0.6); backdrop-filter: blur(6px);
+}
+.drop-hint > div {
+  display: grid; justify-items: center; gap: 8px; padding: 32px 44px; border-radius: var(--radius-lg);
+  border: 2px dashed var(--accent); background: var(--surface-strong); text-align: center;
+}
+.drop-hint .icon { width: 40px; height: 40px; color: var(--accent-2); }
+.drop-hint strong { font-family: var(--font-display); font-size: 22px; }
+.drop-hint span { color: var(--text-dim); font-size: 14px; }
+
+.subs-current {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: var(--radius); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
+}
+.subs-current > div { display: grid; gap: 4px; min-width: 0; flex: 1 1 220px; }
+.subs-current strong { font-family: var(--font-display); font-size: 15px; overflow-wrap: anywhere; }
+.subs-current span { color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.subs-current label.btn { cursor: pointer; }
+.subs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.subs-label { font-size: 14px; font-weight: 500; }
+.subs-label small { color: var(--text-faint); font-weight: 400; }
+.subs-row .segmented { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.offset-control { display: flex; align-items: center; gap: 6px; }
+.offset-control output { min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent-2); }
+.btn-sm { height: 34px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
+#subs-btn.on { color: var(--accent-2); }
+
 /* ---------- Small Screens ---------- */
 @media (max-width: 640px) {
   .landing-card { padding: 26px 20px; }
@@ -692,6 +813,7 @@ input[type="range"]:not(.timeline-input) {
   .time { font-size: 12px; }
   .now-playing { display: none; }
   .topbar-actions { margin-left: auto; }
+  .hud-btn.desktop-only { display: none; } /* phone pairing and pop-out are for computers */
   .cam-tile.size-m { --w: 150px; }
   .cam-tile.size-l { --w: 220px; }
   .reaction-tray { flex-wrap: wrap; width: 200px; justify-content: center; }
@@ -700,6 +822,81 @@ input[type="range"]:not(.timeline-input) {
   .segmented { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-body { padding: 22px 18px; }
 }
+
+/* ---------- Phone pairing (computer side) ---------- */
+#phone-btn.on { color: var(--success); background: rgba(16, 185, 129, 0.14); }
+.phone-pair { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: center; }
+.phone-qr {
+  display: grid; place-items: center; width: 200px; aspect-ratio: 1; padding: 10px; border-radius: var(--radius);
+  background: #fff; color: #333; font-size: 13px; text-align: center;
+}
+.phone-qr svg { width: 100%; height: 100%; display: block; }
+.phone-qr-wait { padding: 12px; }
+.phone-steps p { margin: 0 0 10px; font-size: 14px; line-height: 1.5; color: var(--text-dim); }
+.phone-steps strong { color: var(--text); }
+.phone-status { font-weight: 600; color: var(--text-dim) !important; }
+.phone-status::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--warn); vertical-align: 1px; }
+.phone-status.on { color: var(--success) !important; }
+.phone-status.on::before { background: var(--success); }
+.phone-url-row { display: flex; gap: 8px; }
+.phone-url-row input {
+  flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35); color: var(--text-dim); font: 500 12px var(--font-body);
+}
+.phone-unpair { justify-self: start; }
+@media (max-width: 640px) {
+  .phone-pair { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+}
+
+/* ---------- Phone remote page ---------- */
+.remote-page { min-height: 100dvh; background: var(--bg-gradient); }
+.remote {
+  display: grid; gap: 16px; max-width: 480px; margin: 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+.remote-head { display: flex; align-items: center; justify-content: space-between; }
+.remote-head .brand { font-family: var(--font-display); font-weight: 800; font-size: 18px; }
+.remote-link { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.remote-link .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.remote-link[data-tone="on"] .dot { background: var(--success); box-shadow: 0 0 10px var(--success-glow); }
+.remote-link[data-tone="off"] .dot { background: var(--danger); }
+.remote-card {
+  display: grid; gap: 16px; padding: 20px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.remote-card h1 { margin: -8px 0 0; font: 800 22px/1.25 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.remote-card h2 { margin: 0 0 6px; font: 700 18px var(--font-display); }
+.remote-card .eyebrow { margin: 0; }
+.remote-card .hint { margin: 0; }
+.remote-scrub input { width: 100%; accent-color: var(--accent); }
+.remote-times { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.remote-transport { display: flex; align-items: center; justify-content: center; gap: 22px; }
+.remote-btn {
+  display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface-glass); color: var(--text); cursor: pointer; touch-action: manipulation;
+}
+.remote-btn .icon { width: 28px; height: 28px; }
+.remote-play { width: 88px; height: 88px; background: var(--accent); border: 0; box-shadow: 0 10px 30px -8px var(--accent-glow); }
+.remote-play .icon { width: 36px; height: 36px; }
+.remote-btn:active { transform: scale(0.94); }
+.remote-btn:disabled, .remote-reaction:disabled { opacity: 0.35; }
+.remote-volume .icon { width: 18px; height: 18px; vertical-align: -4px; margin-right: 4px; }
+.remote-volume input { width: 100%; accent-color: var(--accent-2); }
+.remote-reactions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.remote-reaction {
+  height: 56px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface-glass);
+  font-size: 26px; cursor: pointer; touch-action: manipulation;
+}
+.remote-cam-preview { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; aspect-ratio: 4 / 3; }
+.remote-cam-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.remote-cam-preview video.mirrored { transform: scaleX(-1); }
+.remote-cam-live {
+  position: absolute; left: 10px; top: 10px; padding: 4px 10px; border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.6); font-size: 12px; font-weight: 700;
+}
+.remote-cam-live.live { color: #fff; background: var(--danger); }
+.remote-cam-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.remote-cam-actions .btn .icon { width: 18px; height: 18px; }
 
 @media (prefers-reduced-motion: reduce) {
   .floater, .floater-emoji, .landing-glow { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }

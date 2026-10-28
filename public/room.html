@@ -12,6 +12,11 @@
   <link rel="stylesheet" href="/css/styles.css">
   <!-- Fetch every module in parallel instead of discovering them import by import. -->
   <link rel="modulepreload" href="/js/room.js">
+  <link rel="modulepreload" href="/js/subtitles.js">
+  <link rel="modulepreload" href="/js/subtitles-ui.js">
+  <link rel="modulepreload" href="/js/moments.js">
+  <link rel="modulepreload" href="/js/spatial.js">
+  <link rel="modulepreload" href="/js/laser.js">
   <link rel="modulepreload" href="/js/util.js">
   <link rel="modulepreload" href="/js/rtc.js">
   <link rel="modulepreload" href="/js/codecs.js">
@@ -21,12 +26,17 @@
   <link rel="modulepreload" href="/js/chat.js">
   <link rel="modulepreload" href="/js/reactions.js">
   <link rel="modulepreload" href="/js/ambilight.js">
+  <link rel="modulepreload" href="/js/geometry.js">
+  <link rel="modulepreload" href="/js/gestures.js">
+  <link rel="modulepreload" href="/js/danmaku.js">
+  <link rel="modulepreload" href="/js/pip.js">
+  <link rel="modulepreload" href="/js/phone-link.js">
   <link rel="modulepreload" href="/js/links.js">
   <link rel="modulepreload" href="/js/youtube.js">
 </head>
 <body class="theater">
   <!-- Icon sprite (stroke icons, 24px grid) -->
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <svg id="icon-sprite" width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/></symbol>
@@ -50,17 +60,37 @@
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
       <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+      <symbol id="i-laser" viewBox="0 0 24 24"><circle cx="18" cy="6" r="2.5"/><path d="M15.5 8.5 4 20M18 1.5V3M22.5 6H21M21.2 2.8l-1 1"/></symbol>
+      <symbol id="i-cc" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M10.5 10.2a2.2 2.2 0 1 0 0 3.6M17 10.2a2.2 2.2 0 1 0 0 3.6"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+      <symbol id="i-rewind" viewBox="0 0 24 24"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></symbol>
+      <symbol id="i-ffwd" viewBox="0 0 24 24"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></symbol>
+      <symbol id="i-float" viewBox="0 0 24 24"><path d="M9 6h12M3 12h13M11 18h10"/><path d="M5 4.5 3 6l2 1.5M7 16.5 5 18l2 1.5" stroke-width="1.6"/></symbol>
+      <symbol id="i-pip" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12.5" y="11.5" width="6" height="5" rx="1" fill="currentColor"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
     </defs>
   </svg>
 
   <!-- Edge-to-edge stage -->
   <main id="stage" class="stage">
-    <canvas id="ambilight" class="ambilight" aria-hidden="true"></canvas>
     <div id="yt-host" class="player yt-host" hidden></div>
     <video id="player" class="player" playsinline preload="auto"></video>
+    <!-- Behind the video (z-index 0); in front of it, with the picture cut out, when the file has black bars. -->
+    <canvas id="ambilight" class="ambilight" aria-hidden="true"></canvas>
+    <div id="dimmer" class="dimmer" aria-hidden="true"></div>
     <!-- Catches clicks over the movie (incl. the YouTube iframe) so every play/pause goes through room sync. -->
     <div id="click-shield" class="click-shield" aria-hidden="true"></div>
+    <div id="subtitles" class="subtitles" aria-hidden="true"></div>
+    <div id="gesture-hint" class="gesture-hint" aria-live="polite"></div>
+
+    <div id="pip-placeholder" class="stage-message" hidden>
+      <p class="eyebrow">Popped out</p>
+      <h2>Playing in the pop-out window</h2>
+      <p>It stays on top while you use other apps, with everyone’s webcams. Close it (or press O) to bring the movie back here.</p>
+      <button class="btn btn-primary btn-lg" data-action="toggle-pip">Bring it back</button>
+    </div>
 
     <div id="empty-state" class="stage-message" hidden>
       <p class="eyebrow">Nothing playing</p>
@@ -92,7 +122,10 @@
   <!-- Floating layers -->
   <div id="cameras" class="cameras-layer" aria-label="Webcams"></div>
   <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
+  <div id="danmaku-layer" class="danmaku-layer" aria-hidden="true" hidden></div>
+  <canvas id="laser-layer" class="laser-layer" aria-hidden="true"></canvas>
   <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="drop-hint" class="drop-hint" hidden><div><svg class="icon"><use href="#i-cc"/></svg><strong>Drop subtitles</strong><span>.srt or .vtt, shared with everyone</span></div></div>
 
   <!-- Top bar -->
   <header id="topbar" class="hud hud-top">
@@ -113,6 +146,7 @@
         <div class="timeline-fill" id="timeline-fill"></div>
         <div class="timeline-thumb" id="timeline-thumb"></div>
       </div>
+      <div class="timeline-moments" id="timeline-moments" aria-label="Reaction moments"></div>
       <div class="timeline-tooltip" id="timeline-tooltip" hidden>0:00</div>
       <input type="range" id="seek" class="timeline-input" min="0" max="1000" step="1" value="0" aria-label="Seek">
     </div>
@@ -131,14 +165,18 @@
         </button>
         <button class="hud-btn" data-action="toggle-cam" id="cam-btn" title="Camera (V)"><svg class="icon"><use href="#i-cam-off"/></svg></button>
         <button class="hud-btn" data-action="open-source" title="Choose a movie / share screen"><svg class="icon"><use href="#i-film"/></svg></button>
+        <button class="hud-btn" data-action="toggle-laser" id="laser-btn" title="Laser pointer (P, or hold Alt)"><svg class="icon"><use href="#i-laser"/></svg></button>
         <div class="reaction-picker" id="reaction-picker">
           <button class="hud-btn" data-action="toggle-reactions" title="Reactions (R)"><svg class="icon"><use href="#i-smile"/></svg></button>
           <div class="reaction-tray" id="reaction-tray" hidden></div>
         </div>
       </div>
       <div class="hud-group hud-right">
+        <button class="hud-btn" data-action="open-subs" id="subs-btn" title="Subtitles (S)"><svg class="icon"><use href="#i-cc"/></svg></button>
         <button class="hud-btn" data-action="open-mixer" title="Sound mixer"><svg class="icon"><use href="#i-sliders"/></svg></button>
         <button class="hud-btn" data-action="toggle-chat" id="chat-btn" title="Chat (C)"><svg class="icon"><use href="#i-chat"/></svg><span class="badge" id="chat-badge" hidden>0</span></button>
+        <button class="hud-btn desktop-only" data-action="open-phone" id="phone-btn" title="Phone remote &amp; webcam: scan a QR code"><svg class="icon"><use href="#i-phone"/></svg></button>
+        <button class="hud-btn desktop-only" data-action="toggle-pip" id="pip-btn" title="Pop out: keep watching on top of other apps (O)"><svg class="icon"><use href="#i-pip"/></svg></button>
         <button class="hud-btn" data-action="toggle-fullscreen" id="fs-btn" title="Fullscreen (F)"><svg class="icon"><use href="#i-expand"/></svg></button>
       </div>
     </div>
@@ -148,6 +186,7 @@
   <aside id="chat-drawer" class="drawer" aria-label="Chat" inert>
     <div class="drawer-head">
       <h2>Chat</h2>
+      <button class="icon-btn danmaku-btn" id="danmaku-btn" data-action="toggle-danmaku" aria-pressed="false" title="Float new messages across the movie (D)"><svg class="icon"><use href="#i-float"/></svg></button>
       <button class="icon-btn" data-action="toggle-chat" title="Close (Esc)"><svg class="icon"><use href="#i-x"/></svg></button>
     </div>
     <ul class="people" id="people-list"></ul>
@@ -231,7 +270,7 @@
   <dialog id="mixer-dialog" class="dialog">
     <div class="dialog-body">
       <div class="dialog-head">
-        <h2>Sound mixer</h2>
+        <h2>Sound &amp; picture</h2>
         <button class="icon-btn" data-action="close-dialog" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
       </div>
       <label class="slider-field">
@@ -243,8 +282,75 @@
         <input type="range" id="voice-vol" min="0" max="100" value="100">
       </label>
       <label class="toggle"><input type="checkbox" id="ambilight-toggle" checked><span>Ambilight glow</span></label>
+      <label class="toggle"><input type="checkbox" id="fill-toggle"><span>Fill the screen <small class="toggle-note">crops the edges · Z or pinch</small></span></label>
+      <label class="toggle"><input type="checkbox" id="spatial-toggle"><span>Spatial voices <small class="toggle-note">best with headphones</small></span></label>
+      <p class="hint">Spatial voices: each friend sounds from where their camera tile is on screen. Drag a tile left and their voice moves left. On speakers, some browsers can't cancel the echo, so use headphones.</p>
       <p class="hint" id="volume-locked-note" hidden>On iPhone and iPad, the side buttons set the loudness; these sliders can only mute (drag to 0).</p>
+      <p class="hint">On a phone or tablet: double-tap the left or right side to skip 10 s (keep tapping for more), swipe up or down on the left for brightness and on the right for volume, and pinch to fill the screen.</p>
       <p class="hint">Movie audio is sent as clean stereo with echo cancellation and noise suppression turned off. Voice chat has those filters on.</p>
+    </div>
+  </dialog>
+
+  <!-- Phone remote & webcam -->
+  <dialog id="phone-dialog" class="dialog">
+    <div class="dialog-body">
+      <div class="dialog-head">
+        <h2>Use your phone</h2>
+        <button class="icon-btn" data-action="close-dialog" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="phone-pair">
+        <div class="phone-qr" id="phone-qr" role="img" aria-label="QR code for your phone"></div>
+        <div class="phone-steps">
+          <p>Scan the code with your phone’s camera. Nothing to install.</p>
+          <p><strong>Remote:</strong> play, pause, skip, scrub, this screen’s volume and reactions, from the sofa.</p>
+          <p><strong>Webcam:</strong> tap “Start camera” on the phone and it becomes your camera in the room.</p>
+          <p class="phone-status" id="phone-status">Waiting for your phone…</p>
+        </div>
+      </div>
+      <div class="phone-url-row">
+        <input id="phone-url" readonly aria-label="Link for your phone">
+        <button class="btn btn-ghost btn-sm" data-action="copy-phone-url">Copy</button>
+      </div>
+      <p class="hint" id="phone-https-note" hidden>For the phone’s camera, start the server with “npm run start:https” and scan again: phones only allow the camera on secure (https://) addresses. The remote works either way.</p>
+      <button class="btn btn-ghost btn-sm phone-unpair" data-action="unpair-phones" id="phone-unpair" hidden>Disconnect phones</button>
+    </div>
+  </dialog>
+
+  <!-- Subtitles -->
+  <dialog id="subs-dialog" class="dialog">
+    <div class="dialog-body">
+      <div class="dialog-head">
+        <h2>Subtitles</h2>
+        <button class="icon-btn" data-action="close-dialog" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="subs-current">
+        <div>
+          <strong id="subs-name">No subtitles</strong>
+          <span id="subs-meta">Load an .srt or .vtt file; everyone in the room gets it. You can also drop the file anywhere on the screen.</span>
+        </div>
+        <label class="btn btn-ghost"><input type="file" id="subs-file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden>Load file…</label>
+      </div>
+      <div class="subs-row" id="subs-loaded-row" hidden>
+        <label class="toggle"><input type="checkbox" id="subs-show" checked><span>Show subtitles (S)</span></label>
+        <button class="btn btn-ghost btn-sm" data-action="remove-subs">Remove for everyone</button>
+      </div>
+      <div class="subs-row">
+        <span class="subs-label">Timing <small>([ and ] keys)</small></span>
+        <div class="offset-control">
+          <button class="btn btn-ghost btn-sm" data-action="subs-earlier" title="Show earlier ([)">−0.25s</button>
+          <output id="subs-offset">0.00s</output>
+          <button class="btn btn-ghost btn-sm" data-action="subs-later" title="Show later (])">+0.25s</button>
+          <button class="btn btn-ghost btn-sm" data-action="subs-reset">Reset</button>
+        </div>
+      </div>
+      <div class="subs-row"><span class="subs-label">Size</span><div class="segmented" id="subs-size" role="radiogroup" aria-label="Subtitle size"></div></div>
+      <div class="subs-row"><span class="subs-label">Color</span><div class="segmented" id="subs-color" role="radiogroup" aria-label="Subtitle color"></div></div>
+      <div class="subs-row"><span class="subs-label">Font</span><div class="segmented" id="subs-font" role="radiogroup" aria-label="Subtitle font"></div></div>
+      <label class="slider-field">
+        <span>Background <output id="subs-bg-out">60%</output></span>
+        <input type="range" id="subs-bg" min="0" max="100" value="60">
+      </label>
+      <p class="hint">Style and timing are yours only; the subtitle file is shared.</p>
     </div>
   </dialog>
 

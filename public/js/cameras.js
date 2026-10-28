@@ -141,11 +141,23 @@ export class CameraDeck {
     this.root = root;
     this.tiles = new Map(); // key -> tile
     this.voiceVolume = 1;
+    this.externalVoices = false; // true while spatial voices play them through Web Audio
     /** Set by the page: called with (key, { fx, fy, size }) when the local user changes a tile. */
     this.onLayout = null;
     window.addEventListener('resize', () => {
       for (const tile of this.tiles.values()) tile.drag.reflow();
     });
+  }
+
+  /** Everyone's tile, for the pop-out window: { key, name, isSelf, stream, camera }. */
+  list() {
+    return [...this.tiles.values()].map((t) => ({
+      key: t.key,
+      name: t.name,
+      isSelf: t.isSelf,
+      stream: t.video.srcObject,
+      camera: !t.el.classList.contains('cam-off'),
+    }));
   }
 
   /** Adds or returns the tile for a participant. `cam` is the room's current layout for it. */
@@ -184,10 +196,20 @@ export class CameraDeck {
 
   setVoiceVolume(volume) {
     this.voiceVolume = volume;
+    this.#applyVoiceOutput();
+  }
+
+  /** When voices play through Web Audio (spatial voices), tiles must stay silent. */
+  setExternalVoices(external) {
+    this.externalVoices = external;
+    this.#applyVoiceOutput();
+  }
+
+  #applyVoiceOutput() {
     for (const tile of this.tiles.values()) {
       if (tile.isSelf) continue;
-      tile.video.volume = volume;
-      tile.video.muted = volume === 0; // the only control that works on iOS
+      tile.video.volume = this.voiceVolume;
+      tile.video.muted = Boolean(this.externalVoices) || this.voiceVolume === 0; // muted also works on iOS
     }
   }
 
@@ -197,7 +219,7 @@ export class CameraDeck {
     if (isSelf) video.classList.add('mirrored');
     else {
       video.volume = this.voiceVolume;
-      video.muted = this.voiceVolume === 0;
+      video.muted = Boolean(this.externalVoices) || this.voiceVolume === 0;
     }
 
     const avatar = h('div', { class: 'cam-avatar' });

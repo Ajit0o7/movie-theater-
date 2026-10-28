@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import QRCode from 'qrcode';
 import { Server } from 'socket.io';
 import {
   RoomError,
@@ -15,7 +16,9 @@ import {
   addParticipant,
   applyHeartbeat,
   applySyncEvent,
+  clearSubtitles,
   createRoom,
+  currentSubtitles,
   expireAwaySource,
   findByClientId,
   generateRoomId,
@@ -24,14 +27,29 @@ import {
   listParticipants,
   publicParticipant,
   reclaimSource,
+  recordMoment,
   removeParticipant,
+  sanitizeLaserPoints,
   setCamLayout,
   setMedia,
   setStatus,
   setSource,
+  setSubtitles,
   snapshotPlayback,
 } from './rooms.js';
 import { createIceProvider } from './ice.js';
+import {
+  acceptableState,
+  createPairings,
+  deletePairing,
+  findOwnerPairing,
+  findPairingOwnedBy,
+  joinPairing,
+  pairFor,
+  phoneOrigin,
+  sanitizeCommand,
+  sweepPairings,
+} from './remote.js';
 import { lanAddresses, loadOrCreateCert } from './tls.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,7 +61,8 @@ export const HOST_GRACE_MS = 60 * 1000;
 export function createCinemaServer({ env = process.env, tls = null, ice = createIceProvider(env), hostGraceMs = HOST_GRACE_MS } = {}) {
   const app = express();
   const httpServer = tls ? createHttpsServer(tls, app) : createServer(app);
-  const io = new Server(httpServer, { maxHttpBufferSize: 1e6 });
+  // Room for a large subtitle file (MAX_SUBTITLE_CHARS); every other message is validated.
+  const io = new Server(httpServer, { maxHttpBufferSize: 5e6 });
   const rooms = new Map();
   const cleanupTimers = new Map();
 
@@ -68,7 +87,39 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
     res.sendFile(path.join(PUBLIC_DIR, 'room.html'));
   });
 
+  // The phone remote (opened by scanning the QR code a computer in the room shows).
+  app.get('/remote/:roomId', (req, res) => {
+    if (!isValidRoomId(req.params.roomId)) return res.redirect('/');
+    res.sendFile(path.join(PUBLIC_DIR, 'remote.html'));
+  });
+
   app.get('/healthz', (_req, res) => res.json({ ok: true, rooms: rooms.size }));
+
+  const pairings = createPairings();
+  const phoneOf = (socketId) => io.sockets.sockets.get(socketId);
+  /** Ends pairings: their phones are told and disconnected. */
+  function endPairings(list) {
+    for (const p of list) {
+      deletePairing(pairings, p);
+      for (const id of p.phones) {
+        phoneOf(id)?.emit('remote:ended');
+        phoneOf(id)?.disconnect(true);
+      }
+    }
+  }
+  const sweeper = setInterval(() => endPairings(sweepPairings(pairings, Date.now())), 60_000);
+  sweeper.unref?.();
+  httpServer.on('close', () => clearInterval(sweeper));
+  const lanOrigins = () => {
+    const port = httpServer.address()?.port;
+    return port ? lanAddresses().map((ip) => `${tls ? 'https' : 'http'}://${ip}:${port}`) : [];
+  };
+  /** A computer went away (or came back): its phones show that. */
+  function ownerPresence(pairing, online) {
+    pairing.ownerGoneSince = online ? null : Date.now();
+    if (!online) pairing.ownerSocketId = null;
+    for (const id of pairing.phones) io.to(id).emit('remote:owner', { online, name: pairing.ownerName });
+  }
 
   function getOrCreateRoom(id) {
     clearTimeout(cleanupTimers.get(id));
@@ -135,6 +186,7 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
 
   io.on('connection', (socket) => {
     let room = null;
+    let phoneFor = null; // when this socket is a paired phone: its pairing
     const self = () => room?.participants.get(socket.id);
 
     // Every client message goes through here: payloads may be null or not objects and the
@@ -156,7 +208,7 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
     on('time:ping', (_payload, ack) => ack(Date.now()));
 
     on('room:join', ({ roomId, name, clientId }, ack) => {
-      if (room) return ack({ error: 'Already in a room.' });
+      if (room || phoneFor) return ack({ error: 'Already in a room.' }); // a phone remote never joins
       if (!isValidRoomId(roomId)) return ack({ error: 'Invalid room id.' });
       const target = getOrCreateRoom(roomId.toLowerCase());
       // Same tab reconnecting (Wi-Fi switch, sleep) before the server noticed the old
@@ -175,11 +227,20 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
           socket.to(room.id).emit('sync:state', { playback: snapshotPlayback(room.playback), actor: participant.name, action: 'OWNER_BACK' });
         }
         socket.to(room.id).emit('peer:joined', publicParticipant(participant));
+        // This tab had paired a phone before reconnecting/reloading: the phone carries on.
+        const paired = participant.clientId && findOwnerPairing(pairings, room.id, participant.clientId);
+        if (paired) {
+          paired.ownerSocketId = socket.id;
+          ownerPresence(paired, true);
+          socket.emit('remote:status', { phones: paired.phones.size });
+        }
         ack({
           self: publicParticipant(participant),
           peers: listParticipants(room).filter((p) => p.id !== socket.id),
           playback: snapshotPlayback(room.playback),
           chat: room.chat,
+          subtitles: currentSubtitles(room),
+          moments: room.moments,
         });
       } catch (err) {
         scheduleCleanup(target);
@@ -210,6 +271,23 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
       if (!room) return;
       const stored = setCamLayout(room, id, cam);
       if (stored) socket.to(room.id).emit('cam:layout', { id, cam: stored });
+    });
+
+    on('subs:set', (input, ack) => {
+      if (!room) return ack({ error: 'Not in a room.' });
+      try {
+        const subs = setSubtitles(room, socket.id, input);
+        io.to(room.id).emit('subs:state', { subs, actor: self()?.name });
+        ack({ ok: true });
+      } catch (err) {
+        ack({ error: err instanceof RoomError ? err.message : 'Could not add subtitles.' });
+      }
+    });
+
+    on('subs:clear', () => {
+      if (!room || !room.subtitles) return;
+      clearSubtitles(room);
+      io.to(room.id).emit('subs:state', { subs: null, actor: self()?.name });
     });
 
     on('sync:source', (input, ack) => {
@@ -263,14 +341,94 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
       if (message) io.to(room.id).emit('chat:message', message);
     });
 
+    // Laser pointer: relayed, never stored. Validated and rate-limited (~50 messages/s).
+    let lastLaser = 0;
+    on('laser', ({ pts }) => {
+      const now = Date.now();
+      if (!room || now - lastLaser < 20) return;
+      const points = sanitizeLaserPoints(pts);
+      if (!points) return;
+      lastLaser = now;
+      socket.to(room.id).emit('laser', { from: socket.id, name: self()?.name, pts: points });
+    });
+
     on('reaction', ({ emoji }) => {
       if (!room || !isValidReaction(emoji)) return;
-      io.to(room.id).emit('reaction', { emoji, from: socket.id, name: self()?.name });
+      const t = recordMoment(room, emoji); // movie time, or null with no timeline (screen share)
+      io.to(room.id).emit('reaction', { emoji, from: socket.id, name: self()?.name, t });
     });
+
+    // ---- phone remote --------------------------------------------------------------
+    // The computer asks for its pairing: a token and a QR code of the link for the phone.
+    on('remote:pair', ({ origin }, ack) => {
+      const me = self();
+      if (!me) return ack({ error: 'Join the room first.' });
+      const pairing = pairFor(pairings, { roomId: room.id, clientId: me.clientId ?? socket.id, socketId: socket.id, name: me.name }, Date.now());
+      const base = phoneOrigin(origin, lanOrigins());
+      if (!base) return ack({ error: 'Couldn’t work out an address your phone can open.' });
+      const url = `${base}/remote/${room.id}?pair=${pairing.token}`;
+      QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }).then(
+        (qr) => ack({ url, qr, phones: pairing.phones.size }),
+        () => ack({ error: 'Couldn’t make the QR code.' }),
+      );
+    });
+
+    on('remote:unpair', () => {
+      const pairing = findPairingOwnedBy(pairings, socket.id);
+      if (pairing) endPairings([pairing]);
+    });
+
+    // A phone that scanned the code. It never joins the room itself.
+    on('remote:join', ({ token }, ack) => {
+      if (room || phoneFor) return ack({ error: 'Already connected.' });
+      const result = joinPairing(pairings, token, socket.id);
+      if (result.error) return ack({ error: result.error });
+      phoneFor = result.pairing;
+      if (phoneFor.ownerSocketId) io.to(phoneFor.ownerSocketId).emit('remote:status', { phones: phoneFor.phones.size, joined: socket.id });
+      ack({ ok: true, roomId: phoneFor.roomId, name: phoneFor.ownerName, online: Boolean(phoneFor.ownerSocketId) });
+    });
+
+    // Per-second budgets for a phone's messages (a scrub bar or ICE gathering never needs more).
+    const budgets = {};
+    const withinBudget = (kind, max) => {
+      const second = Math.floor(Date.now() / 1000);
+      const b = (budgets[kind] ??= { second, count: 0 });
+      if (b.second !== second) Object.assign(b, { second, count: 0 });
+      return ++b.count <= max;
+    };
+    on('remote:command', (input) => {
+      if (!phoneFor?.ownerSocketId || !withinBudget('command', 20)) return;
+      const command = sanitizeCommand(input);
+      if (command) io.to(phoneFor.ownerSocketId).emit('remote:command', { ...command, from: socket.id });
+    });
+
+    // Phone camera signaling (WebRTC offer/answer/candidates), only between a phone and its computer.
+    on('remote:signal', ({ to, data }) => {
+      if (phoneFor) {
+        if (phoneFor.ownerSocketId && withinBudget('signal', 60)) io.to(phoneFor.ownerSocketId).emit('remote:signal', { from: socket.id, data });
+        return;
+      }
+      const pairing = findPairingOwnedBy(pairings, socket.id);
+      if (pairing?.phones.has(to)) io.to(to).emit('remote:signal', { data });
+    });
+
+    // The computer's player state, for its phones' screens.
+    on('remote:state', (state) => {
+      const pairing = findPairingOwnedBy(pairings, socket.id);
+      if (!pairing?.phones.size || !acceptableState(state)) return;
+      for (const id of pairing.phones) io.to(id).emit('remote:state', state);
+    });
+
+    /** This computer is gone for now: its phones wait for it (the pairing outlives a reload). */
+    function ownerAway() {
+      const pairing = findPairingOwnedBy(pairings, socket.id);
+      if (pairing) ownerPresence(pairing, false);
+    }
 
     // Closing the tab or navigating away is deliberate: end any stream right away.
     on('room:leave', () => {
       if (!room) return;
+      ownerAway();
       leave(room, socket.id, { grace: false });
       socket.leave(room.id);
       room = null;
@@ -278,7 +436,14 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
 
     // A dropped connection may come back (Wi-Fi blip, sleep): give a host time to return.
     socket.on('disconnect', () => {
+      if (phoneFor) {
+        phoneFor.phones.delete(socket.id);
+        if (phoneFor.ownerSocketId) io.to(phoneFor.ownerSocketId).emit('remote:status', { phones: phoneFor.phones.size, left: socket.id });
+        phoneFor = null;
+        return;
+      }
       if (!room) return;
+      ownerAway();
       leave(room, socket.id, { grace: true });
     });
   });
