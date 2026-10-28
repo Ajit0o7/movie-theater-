@@ -46,7 +46,9 @@ test('catch-up seek latency is forgotten when the source changes', () => {
 });
 
 test('a viewer who is ahead waits for the room instead of seeking back (keeps the buffer)', async (t) => {
-  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  // Date is mocked too, so the room's clock advances with the ticks as it does in real use
+  // (with a real clock the hold could end and immediately re-trigger, making this flaky).
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: 1_000_000 });
   const video = fakeVideo();
   const calls = [];
   video.pause = () => { calls.push('pause'); video.paused = true; };
