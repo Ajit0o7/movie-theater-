@@ -710,7 +710,7 @@ input[type="range"]:not(.timeline-input) {
 /* ---------- Laser pointer ---------- */
 .laser-layer { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 17; pointer-events: none; }
 body.laser-mode .click-shield { cursor: crosshair; }
-#laser-btn.on { color: var(--accent-2); background: rgba(56, 189, 248, 0.14); }
+#laser-btn.on, #pip-btn.on { color: var(--accent-2); background: rgba(56, 189, 248, 0.14); }
 
 /* ---------- Timeline moments ---------- */
 .timeline-moments { position: absolute; inset: 0; z-index: 2; pointer-events: none; }

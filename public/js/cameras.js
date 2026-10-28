@@ -149,6 +149,17 @@ export class CameraDeck {
     });
   }
 
+  /** Everyone's tile, for the pop-out window: { key, name, isSelf, stream, camera }. */
+  list() {
+    return [...this.tiles.values()].map((t) => ({
+      key: t.key,
+      name: t.name,
+      isSelf: t.isSelf,
+      stream: t.video.srcObject,
+      camera: !t.el.classList.contains('cam-off'),
+    }));
+  }
+
   /** Adds or returns the tile for a participant. `cam` is the room's current layout for it. */
   ensure(key, { name, isSelf = false, cam = null }) {
     let tile = this.tiles.get(key);

@@ -4,6 +4,7 @@ import { Ambilight } from './ambilight.js';
 import { CameraDeck, SpeakingDetector } from './cameras.js';
 import { ChatDrawer } from './chat.js';
 import { Danmaku } from './danmaku.js';
+import { PopOut, canPopOut } from './pip.js';
 import {
   DEFAULT_PRESET,
   STREAM_PRESETS,
@@ -1180,6 +1181,50 @@ function hideHud() {
   if (document.body.classList.contains('is-playing')) document.body.classList.add('idle');
 }
 
+// Pop-out (Document Picture-in-Picture): movie, webcams and controls in an always-on-top
+// window while you use other apps. Browsers without it get their own picture-in-picture.
+const popout = new PopOut({
+  player,
+  getCams: () => deck.list(),
+  getState: () => {
+    const sync = session?.sync;
+    const type = sync?.source.type ?? 'none';
+    return {
+      available: Boolean(sync) && type !== 'none' && type !== 'youtube',
+      playing: type === 'screen' ? !player.paused : Boolean(sync?.state?.playing),
+      time: sync?.localTime() ?? 0,
+      duration: sync?.controllable ? sync.duration() : 0,
+      controllable: Boolean(sync?.controllable),
+      title: $('#now-playing').textContent || 'Cinema',
+    };
+  },
+  control: {
+    toggle: () => session?.sync.toggle(),
+    seekBy: (s) => session?.sync.seekBy(s),
+    seek: (t) => session?.sync.seek(t),
+  },
+  onChange: (open) => {
+    $('#pip-placeholder').hidden = !open;
+    $('#pip-btn').classList.toggle('on', open);
+    if (!open) layoutPicture();
+  },
+});
+$('#pip-btn').hidden = !canPopOut();
+
+async function togglePopOut() {
+  if (!canPopOut()) return;
+  const type = session?.sync.source.type ?? 'none';
+  if (!popout.active && type === 'none') return toast('Start a movie first, then pop it out.');
+  if (!popout.active && type === 'youtube') {
+    return toast('YouTube videos can’t be popped out (their player can’t leave the page). Files, links, streams and screen shares can.', { tone: 'warn', duration: 6000 });
+  }
+  try {
+    await popout.toggle();
+  } catch (err) {
+    toast(`Couldn’t open the pop-out window: ${err.message}`, { tone: 'error' });
+  }
+}
+
 function toggleFullscreen() {
   if (document.fullscreenElement) return document.exitFullscreen();
   // Fullscreen the whole app (not just <video>) so cameras, chat and reactions stay visible.
@@ -1361,6 +1406,7 @@ const actions = {
   'toggle-reactions': () => session?.reactions.toggleTray(),
   'toggle-laser': toggleLaser,
   'toggle-danmaku': () => setDanmaku(!settings.danmaku),
+  'toggle-pip': togglePopOut,
   'copy-invite': copyInvite,
   'open-subs': () => $('#subs-dialog').showModal(),
   'remove-subs': () => subtitles.remove(),
@@ -1545,6 +1591,7 @@ document.addEventListener('keydown', (e) => {
     p: toggleLaser,
     z: () => setFill(!settings.fill),
     d: () => setDanmaku(!settings.danmaku),
+    o: togglePopOut,
     i: actions['toggle-stats'],
     s: () => subtitles.toggleVisible() || $('#subs-dialog').showModal(),
     '[': () => subtitles.earlier(),
