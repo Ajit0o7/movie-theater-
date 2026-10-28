@@ -16,6 +16,7 @@
   <link rel="modulepreload" href="/js/subtitles-ui.js">
   <link rel="modulepreload" href="/js/moments.js">
   <link rel="modulepreload" href="/js/spatial.js">
+  <link rel="modulepreload" href="/js/laser.js">
   <link rel="modulepreload" href="/js/util.js">
   <link rel="modulepreload" href="/js/rtc.js">
   <link rel="modulepreload" href="/js/codecs.js">
@@ -54,6 +55,7 @@
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
       <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+      <symbol id="i-laser" viewBox="0 0 24 24"><circle cx="18" cy="6" r="2.5"/><path d="M15.5 8.5 4 20M18 1.5V3M22.5 6H21M21.2 2.8l-1 1"/></symbol>
       <symbol id="i-cc" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M10.5 10.2a2.2 2.2 0 1 0 0 3.6M17 10.2a2.2 2.2 0 1 0 0 3.6"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
     </defs>
@@ -98,6 +100,7 @@
   <!-- Floating layers -->
   <div id="cameras" class="cameras-layer" aria-label="Webcams"></div>
   <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
+  <canvas id="laser-layer" class="laser-layer" aria-hidden="true"></canvas>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="drop-hint" class="drop-hint" hidden><div><svg class="icon"><use href="#i-cc"/></svg><strong>Drop subtitles</strong><span>.srt or .vtt, shared with everyone</span></div></div>
 
@@ -139,6 +142,7 @@
         </button>
         <button class="hud-btn" data-action="toggle-cam" id="cam-btn" title="Camera (V)"><svg class="icon"><use href="#i-cam-off"/></svg></button>
         <button class="hud-btn" data-action="open-source" title="Choose a movie / share screen"><svg class="icon"><use href="#i-film"/></svg></button>
+        <button class="hud-btn" data-action="toggle-laser" id="laser-btn" title="Laser pointer (P, or hold Alt)"><svg class="icon"><use href="#i-laser"/></svg></button>
         <div class="reaction-picker" id="reaction-picker">
           <button class="hud-btn" data-action="toggle-reactions" title="Reactions (R)"><svg class="icon"><use href="#i-smile"/></svg></button>
           <div class="reaction-tray" id="reaction-tray" hidden></div>

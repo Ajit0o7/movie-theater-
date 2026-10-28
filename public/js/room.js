@@ -20,6 +20,7 @@ import { MOVIE_JITTER_BUFFER_MS, PeerManager, meshBudget } from './rtc.js';
 import { DEFAULT_SUB_STYLE, setupSubtitles } from './subtitles-ui.js';
 import { TimelineMoments } from './moments.js';
 import { SpatialVoices } from './spatial.js';
+import { LaserLayer, containBox, setupLaserInput } from './laser.js';
 import { CinemaSync, ClockSync } from './sync.js';
 import { $, $$, formatTime, h, storage, toast } from './util.js';
 import { checkVideoLink } from './links.js';
@@ -139,6 +140,29 @@ window.addEventListener('resize', measureHud);
 
 // Each friend's voice panned toward their camera tile (opt-in; best with headphones).
 const spatial = new SpatialVoices({ getContext: () => detector.ensureContext() });
+
+// Where the picture is on screen (inside any letterbox bars), so a laser point lands on the
+// same spot of the movie for everyone, whatever their screen size.
+function pictureBox() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (yt) return containBox(w, h, 16, 9);
+  if (player.videoWidth) return containBox(w, h, player.videoWidth, player.videoHeight);
+  return { x: 0, y: 0, w, h };
+}
+const laserLayer = new LaserLayer($('#laser-layer'), { getBox: pictureBox });
+const laser = setupLaserInput({
+  stage: $('#stage'),
+  getBox: pictureBox,
+  isStageTarget: (target) => Boolean(target.closest?.('#stage')) && !document.querySelector('dialog[open]'),
+  onLocal: (pts) => laserLayer.add('self', local.name, pts),
+  onPoints: (pts) => socket?.connected && socket.emit('laser', { pts }),
+});
+function toggleLaser() {
+  const on = laser.toggle();
+  $('#laser-btn').classList.toggle('on', on);
+  toast(on ? 'Laser on: press and drag over the movie (or hold Alt and move the mouse). P to turn off.' : 'Laser off', { duration: on ? 3500 : 1200 });
+}
 
 // Reactions stamped with the movie time, shown on the timeline; click a busy spot to jump.
 const moments = new TimelineMoments($('#timeline-moments'), {
@@ -320,6 +344,7 @@ async function joinRoom() {
     toast(`${name}’s connection can’t keep up with this video, so it keeps buffering for them. A smaller file, or “Same file everywhere”, would help.`, { tone: 'warn', duration: 9000 });
   });
   on('subs:state', ({ subs, actor }) => subtitles.applyState(subs, { actor }));
+  on('laser', ({ from, name, pts }) => laserLayer.add(from, name, pts));
   on('reaction', ({ emoji, t }) => moments.add(t, emoji));
   on('cam:layout', ({ id, cam }) => {
     deck.get(id === session.selfId ? 'self' : id)?.applyLayout(cam, { remote: true });
@@ -1300,6 +1325,7 @@ const actions = {
   'toggle-chat': () => session?.chat.toggle(),
   'toggle-fullscreen': toggleFullscreen,
   'toggle-reactions': () => session?.reactions.toggleTray(),
+  'toggle-laser': toggleLaser,
   'copy-invite': copyInvite,
   'open-subs': () => $('#subs-dialog').showModal(),
   'remove-subs': () => subtitles.remove(),
@@ -1325,6 +1351,7 @@ document.addEventListener('click', (e) => {
 const shield = $('#click-shield');
 let clickTimer = null;
 shield.addEventListener('click', () => {
+  if (laser.active) return; // drawing with the laser, not pressing play
   // Wait briefly so a double-click (fullscreen) doesn't also toggle playback twice.
   clearTimeout(clickTimer);
   clickTimer = setTimeout(() => session?.sync.controllable && session.sync.toggle(), 220);
@@ -1393,6 +1420,7 @@ document.addEventListener('keydown', (e) => {
     m: toggleMic,
     v: toggleCam,
     r: () => session.reactions.toggleTray(),
+    p: toggleLaser,
     i: actions['toggle-stats'],
     s: () => subtitles.toggleVisible() || $('#subs-dialog').showModal(),
     '[': () => subtitles.earlier(),

@@ -33,3 +33,19 @@ test('spatial pan follows the tile across the screen, never fully one-sided', as
   assert.equal(panFor(5000, 1000), 0.8, 'clamped');
   assert.equal(panFor(100, 0), 0);
 });
+
+test('laser points are picture fractions, so they land on the same spot on any screen', async () => {
+  const { containBox, toPicture } = await import('../public/js/laser.js');
+  // A 16:9 movie on a 4:3 screen: bars top and bottom.
+  const box = containBox(1024, 768, 1920, 1080);
+  assert.deepEqual(box, { x: 0, y: 96, w: 1024, h: 576 });
+  assert.deepEqual(toPicture(512, 384, box), [0.5, 0.5]);
+  // The same picture fraction on a 21:9 screen (bars left and right) is the same movie spot.
+  const wide = containBox(2560, 1080, 1920, 1080);
+  assert.deepEqual(wide, { x: 320, y: 0, w: 1920, h: 1080 });
+  assert.deepEqual(toPicture(320 + 960, 540, wide), [0.5, 0.5]);
+  assert.deepEqual(toPicture(-9999, 9999, box), [-0.5, 1.5], 'clamped');
+  const { sanitizeLaserPoints } = await import('../server/rooms.js');
+  assert.deepEqual(sanitizeLaserPoints([[0.123456, 0.5]]), [[0.1235, 0.5]]);
+  for (const bad of [null, [], [[1]], [[0, 'x']], [[5, 0]], Array(25).fill([0, 0])]) assert.equal(sanitizeLaserPoints(bad), null);
+});

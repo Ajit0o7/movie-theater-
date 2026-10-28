@@ -28,6 +28,7 @@ import {
   reclaimSource,
   recordMoment,
   removeParticipant,
+  sanitizeLaserPoints,
   setCamLayout,
   setMedia,
   setStatus,
@@ -285,6 +286,17 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
       if (!room) return;
       const message = addChatMessage(room, socket.id, text);
       if (message) io.to(room.id).emit('chat:message', message);
+    });
+
+    // Laser pointer: relayed, never stored. Validated and rate-limited (~50 messages/s).
+    let lastLaser = 0;
+    on('laser', ({ pts }) => {
+      const now = Date.now();
+      if (!room || now - lastLaser < 20) return;
+      const points = sanitizeLaserPoints(pts);
+      if (!points) return;
+      lastLaser = now;
+      socket.to(room.id).emit('laser', { from: socket.id, name: self()?.name, pts: points });
     });
 
     on('reaction', ({ emoji }) => {

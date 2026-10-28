@@ -353,6 +353,19 @@ export function recordMoment(room, emoji, now = Date.now()) {
   return t;
 }
 
+/** Validates laser pointer points: up to 24 [x, y] pairs as picture fractions. */
+export function sanitizeLaserPoints(pts) {
+  if (!Array.isArray(pts) || !pts.length || pts.length > 24) return null;
+  const out = [];
+  for (const p of pts) {
+    if (!Array.isArray(p) || p.length !== 2) return null;
+    const [x, y] = p.map(Number);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < -0.5 || x > 1.5 || y < -0.5 || y > 1.5) return null;
+    out.push([Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4]);
+  }
+  return out;
+}
+
 export function addChatMessage(room, authorId, text, now = Date.now()) {
   const author = room.participants.get(authorId);
   const clean = String(text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, MAX_CHAT_LENGTH);
