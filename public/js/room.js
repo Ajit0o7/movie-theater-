@@ -19,6 +19,7 @@ import { Reactions } from './reactions.js';
 import { MOVIE_JITTER_BUFFER_MS, PeerManager, meshBudget } from './rtc.js';
 import { DEFAULT_SUB_STYLE, setupSubtitles } from './subtitles-ui.js';
 import { TimelineMoments } from './moments.js';
+import { SpatialVoices } from './spatial.js';
 import { CinemaSync, ClockSync } from './sync.js';
 import { $, $$, formatTime, h, storage, toast } from './util.js';
 import { checkVideoLink } from './links.js';
@@ -41,6 +42,7 @@ const settings = {
   movieVolume: 1,
   voiceVolume: 1,
   ambilight: true,
+  spatial: false,
   quality: DEFAULT_PRESET,
   ...storage.get('cinema.settings', {}),
 };
@@ -134,6 +136,9 @@ function measureHud() {
 }
 measureHud();
 window.addEventListener('resize', measureHud);
+
+// Each friend's voice panned toward their camera tile (opt-in; best with headphones).
+const spatial = new SpatialVoices({ getContext: () => detector.ensureContext() });
 
 // Reactions stamped with the movie time, shown on the timeline; click a busy spot to jump.
 const moments = new TimelineMoments($('#timeline-moments'), {
@@ -382,6 +387,7 @@ function teardownSession() {
   for (const id of session.peers.keys()) {
     deck.remove(id);
     detector.unwatch(`peer:${id}`);
+    spatial.detach(`peer:${id}`);
   }
   session.rtc.destroy();
   session.sync.destroy();
@@ -416,6 +422,7 @@ function removePeer(id) {
   session.remoteStreams.delete(id);
   session.rtc.removePeer(id);
   detector.unwatch(`peer:${id}`);
+  spatial.detach(`peer:${id}`);
   deck.remove(id);
   renderPeople();
   renderSource();
@@ -446,6 +453,7 @@ function reconcilePeer(peerId) {
     const audio = camera.getAudioTracks()[0];
     const watched = detector.sources.get(`peer:${peerId}`);
     if (audio && watched?.track !== audio) detector.watch(`peer:${peerId}`, audio, (level) => tile.setSpeaking(level > 0.08));
+    if (audio) spatial.attach(`peer:${peerId}`, audio, tile.el);
   }
   if (session.sync.source.ownerId === peerId) renderSource();
 }
@@ -1165,6 +1173,9 @@ function applyMovieVolume() {
 function applySettings() {
   applyMovieVolume();
   deck.setVoiceVolume(settings.voiceVolume);
+  deck.setExternalVoices(settings.spatial);
+  spatial.setVolume(settings.voiceVolume);
+  spatial.setEnabled(settings.spatial);
   ambilight.setEnabled(settings.ambilight);
   $('#ambilight').hidden = !settings.ambilight;
   $('#movie-vol-out').textContent = `${movieVol.value}%`;
@@ -1182,6 +1193,12 @@ voiceVol.addEventListener('input', () => {
 ambToggle.addEventListener('change', () => {
   settings.ambilight = ambToggle.checked;
   applySettings();
+});
+$('#spatial-toggle').checked = settings.spatial;
+$('#spatial-toggle').addEventListener('change', (e) => {
+  settings.spatial = e.target.checked;
+  applySettings();
+  if (settings.spatial) toast('Spatial voices on: each friend sounds from where their camera is. Best with headphones.', { duration: 4000 });
 });
 applySettings();
 

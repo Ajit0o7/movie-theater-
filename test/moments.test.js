@@ -23,3 +23,13 @@ test('only the busiest spots get an emoji badge', () => {
   assert.deepEqual(badges.map((b) => b.count), [10, 9, 8, 7, 6, 5]);
   assert.equal(pickBadges(bucketMoments([{ t: 5, emoji: '😂' }], 100)).length, 0, 'a single reaction is a dot, not a badge');
 });
+
+test('spatial pan follows the tile across the screen, never fully one-sided', async () => {
+  const { panFor } = await import('../public/js/spatial.js');
+  assert.equal(panFor(0, 1000), -0.8);
+  assert.equal(panFor(500, 1000), 0);
+  assert.equal(panFor(1000, 1000), 0.8);
+  assert.ok(Math.abs(panFor(250, 1000) + 0.4) < 1e-9);
+  assert.equal(panFor(5000, 1000), 0.8, 'clamped');
+  assert.equal(panFor(100, 0), 0);
+});

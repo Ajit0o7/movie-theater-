@@ -656,6 +656,8 @@ input[type="range"]:not(.timeline-input) {
 }
 .hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.5; }
 
+.toggle-note { color: var(--text-faint); font-size: 12px; font-weight: 400; margin-left: 4px; }
+
 /* ---------- Timeline moments ---------- */
 .timeline-moments { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .moment-dot {
