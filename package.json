@@ -1,0 +1,25 @@
+{
+  "name": "4k-virtual-cinema",
+  "version": "0.1.0",
+  "description": "Zero-install 4K virtual movie theater: edge-to-edge playback, two-way sync, draggable webcams, dual audio mixer, chat and floating reactions.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "start:https": "node server/index.js --https",
+    "dev": "node --watch server/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.1.0",
+    "selfsigned": "^5.5.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}
