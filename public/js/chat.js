@@ -45,6 +45,7 @@ export class ChatDrawer {
     this.list.append(item);
     while (this.list.children.length > 200) this.list.firstElementChild.remove();
     this.list.scrollTop = this.list.scrollHeight;
+    if (notify) document.dispatchEvent(new CustomEvent('chat:new', { detail: { ...message, mine } }));
     if (notify && !mine && !this.open) {
       this.unread++;
       this.badge.textContent = this.unread > 9 ? '9+' : String(this.unread);

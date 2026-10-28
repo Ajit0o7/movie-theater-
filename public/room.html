@@ -28,6 +28,7 @@
   <link rel="modulepreload" href="/js/ambilight.js">
   <link rel="modulepreload" href="/js/geometry.js">
   <link rel="modulepreload" href="/js/gestures.js">
+  <link rel="modulepreload" href="/js/danmaku.js">
   <link rel="modulepreload" href="/js/links.js">
   <link rel="modulepreload" href="/js/youtube.js">
 </head>
@@ -63,6 +64,7 @@
       <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
       <symbol id="i-rewind" viewBox="0 0 24 24"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></symbol>
       <symbol id="i-ffwd" viewBox="0 0 24 24"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></symbol>
+      <symbol id="i-float" viewBox="0 0 24 24"><path d="M9 6h12M3 12h13M11 18h10"/><path d="M5 4.5 3 6l2 1.5M7 16.5 5 18l2 1.5" stroke-width="1.6"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
     </defs>
   </svg>
@@ -109,6 +111,7 @@
   <!-- Floating layers -->
   <div id="cameras" class="cameras-layer" aria-label="Webcams"></div>
   <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
+  <div id="danmaku-layer" class="danmaku-layer" aria-hidden="true" hidden></div>
   <canvas id="laser-layer" class="laser-layer" aria-hidden="true"></canvas>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="drop-hint" class="drop-hint" hidden><div><svg class="icon"><use href="#i-cc"/></svg><strong>Drop subtitles</strong><span>.srt or .vtt, shared with everyone</span></div></div>
@@ -170,6 +173,7 @@
   <aside id="chat-drawer" class="drawer" aria-label="Chat" inert>
     <div class="drawer-head">
       <h2>Chat</h2>
+      <button class="icon-btn danmaku-btn" id="danmaku-btn" data-action="toggle-danmaku" aria-pressed="false" title="Float new messages across the movie (D)"><svg class="icon"><use href="#i-float"/></svg></button>
       <button class="icon-btn" data-action="toggle-chat" title="Close (Esc)"><svg class="icon"><use href="#i-x"/></svg></button>
     </div>
     <ul class="people" id="people-list"></ul>

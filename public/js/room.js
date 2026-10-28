@@ -3,6 +3,7 @@
 import { Ambilight } from './ambilight.js';
 import { CameraDeck, SpeakingDetector } from './cameras.js';
 import { ChatDrawer } from './chat.js';
+import { Danmaku } from './danmaku.js';
 import {
   DEFAULT_PRESET,
   STREAM_PRESETS,
@@ -47,6 +48,7 @@ const settings = {
   ambilight: true,
   spatial: false,
   fill: false, // zoom the picture to cover the screen (pinch / Z)
+  danmaku: false, // chat messages float across the movie
   brightness: 1, // dimming from a swipe on the left half (0.2–1)
   quality: DEFAULT_PRESET,
   ...storage.get('cinema.settings', {}),
@@ -1358,6 +1360,7 @@ const actions = {
   'toggle-fullscreen': toggleFullscreen,
   'toggle-reactions': () => session?.reactions.toggleTray(),
   'toggle-laser': toggleLaser,
+  'toggle-danmaku': () => setDanmaku(!settings.danmaku),
   'copy-invite': copyInvite,
   'open-subs': () => $('#subs-dialog').showModal(),
   'remove-subs': () => subtitles.remove(),
@@ -1498,7 +1501,27 @@ for (const dialog of $$('dialog')) {
   });
 }
 
-document.addEventListener('chat:peek', ({ detail }) => toast(`${detail.name}: ${detail.text}`, { tone: 'chat', duration: 4000 }));
+// Floating chat (danmaku): new messages glide across the top of the movie instead of popping
+// up as toasts. Each viewer's own choice (D, or the button in the chat panel).
+const danmaku = new Danmaku($('#danmaku-layer'), {
+  getTop: () => {
+    const bar = $('#topbar');
+    return bar.offsetTop + bar.offsetHeight + 6; // its height, ignoring the slide-away animation
+  },
+});
+function setDanmaku(on, { announce = true } = {}) {
+  settings.danmaku = on;
+  storage.set('cinema.settings', settings);
+  danmaku.setEnabled(on);
+  $('#danmaku-btn').setAttribute('aria-pressed', String(on));
+  $('#danmaku-btn').classList.toggle('on', on);
+  if (announce) toast(on ? 'Floating chat on: new messages fly across the movie (D)' : 'Floating chat off', { duration: 2200 });
+}
+setDanmaku(settings.danmaku, { announce: false });
+document.addEventListener('chat:new', ({ detail }) => danmaku.add(detail));
+document.addEventListener('chat:peek', ({ detail }) => {
+  if (!settings.danmaku) toast(`${detail.name}: ${detail.text}`, { tone: 'chat', duration: 4000 });
+});
 
 document.addEventListener('keydown', (e) => {
   if (!session || e.target.closest('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) {
@@ -1521,6 +1544,7 @@ document.addEventListener('keydown', (e) => {
     r: () => session.reactions.toggleTray(),
     p: toggleLaser,
     z: () => setFill(!settings.fill),
+    d: () => setDanmaku(!settings.danmaku),
     i: actions['toggle-stats'],
     s: () => subtitles.toggleVisible() || $('#subs-dialog').showModal(),
     '[': () => subtitles.earlier(),
