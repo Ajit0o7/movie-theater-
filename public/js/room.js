@@ -267,8 +267,10 @@ async function joinRoom() {
   local.name = res.self.name;
   const hadSelfTile = deck.get('self') !== undefined;
   const selfTile = deck.ensure('self', { name: local.name, isSelf: true, cam: res.self.cam });
-  // After a reconnect the server only knows our default spot; tell it where our tile really is.
-  if (hadSelfTile) deck.announce('self');
+  // After a reconnect the server only knows a default spot for us. If we had arranged our
+  // tile, tell the room where it is; if it was never moved, just take the new default.
+  if (hadSelfTile && !selfTile.slot && selfTile.slot !== 0) deck.announce('self');
+  else if (hadSelfTile) selfTile.applyLayout(res.self.cam);
   selfTile.setStatus(localStatus());
   refreshSelfTile();
 

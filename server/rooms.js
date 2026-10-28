@@ -89,11 +89,16 @@ export function snapshotPlayback(playback, now = Date.now()) {
 export const CAM_SIZES = ['s', 'm', 'l', 'min'];
 const SLOTS_PER_COLUMN = 3;
 
-/** Default spot for the n-th person: stacked up the right edge, then a second column. */
+/**
+ * Default spot for the n-th person. `auto` means "nobody has arranged this tile yet": each
+ * client stacks auto tiles up the right edge by `slot` using its own screen and tile sizes
+ * (fixed fractions would overlap on short screens). fx/fy are only a fallback. The first
+ * move or resize by anyone replaces it with a real, shared position.
+ */
 export function defaultCamLayout(slot) {
   const column = Math.floor(slot / SLOTS_PER_COLUMN);
   const row = slot % SLOTS_PER_COLUMN;
-  return { fx: Math.max(0, 1 - column * 0.16), fy: Math.max(0, 0.84 - row * 0.3), size: 'm' };
+  return { fx: Math.max(0, 1 - column * 0.16), fy: Math.max(0, 0.84 - row * 0.3), size: 'm', auto: true, slot };
 }
 
 export function normalizeCamLayout(input, fallback) {

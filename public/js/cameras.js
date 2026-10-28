@@ -16,6 +16,19 @@ const REMOTE_MOVE_MS = 200;
 
 export const DEFAULT_LAYOUT = { fx: 1, fy: 0.84, size: 'm' };
 
+const TOP_SAFE = 56; // clear of the top bar (brand, invite chip, people)
+
+/**
+ * Tiles live inside a safe area, so nobody (the shared layout lets anyone place anyone's
+ * tile) can park one underneath the control bar where it could never be grabbed again.
+ * The bottom inset is measured, because the bar is taller on phones.
+ */
+function insets() {
+  const hud = document.getElementById('hud');
+  const bottom = hud ? hud.offsetHeight - parseFloat(getComputedStyle(hud).paddingTop) + 8 : 90;
+  return { top: TOP_SAFE, bottom };
+}
+
 export class DraggableCamera {
   /** `getLayout()` returns the fractions; `onDrag(fx, fy, final)` reports a drag. */
   constructor(element, { onDrag } = {}) {
@@ -35,10 +48,13 @@ export class DraggableCamera {
     element.addEventListener('pointercancel', (e) => this.#up(e));
   }
 
+  /** The room the tile can move in: `top`/`left` origin and the free span left after its size. */
   #free() {
+    const { top, bottom } = insets();
     return {
+      top,
       w: Math.max(0, window.innerWidth - this.element.offsetWidth),
-      h: Math.max(0, window.innerHeight - this.element.offsetHeight),
+      h: Math.max(0, window.innerHeight - top - bottom - this.element.offsetHeight),
     };
   }
 
@@ -48,13 +64,21 @@ export class DraggableCamera {
     this.fy = clamp(fy, 0, 1);
     const free = this.#free();
     this.x = this.fx * free.w;
-    this.y = this.fy * free.h;
+    this.y = free.top + this.fy * free.h;
     this.element.style.transform = `translate3d(${this.x}px, ${this.y}px, 0)`;
+  }
+
+  /** Positions the tile from pixels (inside the safe area) and records the matching fractions. */
+  placePx(x, y) {
+    const free = this.#free();
+    const cx = clamp(x, 0, free.w);
+    const cy = clamp(y - free.top, 0, free.h);
+    this.place(free.w ? cx / free.w : 0, free.h ? cy / free.h : 0);
   }
 
   /** Re-apply after a window resize or a size change (the tile's width changed). */
   reflow() {
-    this.place(this.fx, this.fy);
+    this.autoPlace ? this.autoPlace() : this.place(this.fx, this.fy);
   }
 
   #down(e) {
@@ -73,7 +97,7 @@ export class DraggableCamera {
     this.moved = true;
     const free = this.#free();
     const x = clamp(e.clientX - this.start.x, 0, free.w);
-    const y = clamp(e.clientY - this.start.y, 0, free.h);
+    const y = clamp(e.clientY - this.start.y - free.top, 0, free.h);
     this.place(free.w ? x / free.w : 0, free.h ? y / free.h : 0);
     // Throttled live updates, so everyone watches the tile move rather than jump.
     this.sendTimer ??= setTimeout(() => {
@@ -90,6 +114,26 @@ export class DraggableCamera {
     this.element.classList.remove('is-dragging');
     if (this.moved) this.onDrag?.(this.fx, this.fy, true);
   }
+}
+
+const STACK_GAP = 12;
+const STACK_MARGIN = 16;
+
+/** Stacks an untouched tile up the right edge by slot, wrapping into columns on short screens. */
+function stackAuto(tile) {
+  const { top, bottom } = insets();
+  const w = tile.el.offsetWidth;
+  const hgt = tile.el.offsetHeight;
+  const usable = window.innerHeight - top - bottom;
+  const perColumn = Math.max(1, Math.floor((usable + STACK_GAP) / (hgt + STACK_GAP)));
+  const slot = tile.slot ?? 0;
+  const col = Math.floor(slot / perColumn);
+  const row = slot % perColumn;
+  tile.drag.placePx(
+    window.innerWidth - w - STACK_MARGIN - col * (w + STACK_GAP),
+    window.innerHeight - bottom - (row + 1) * hgt - row * STACK_GAP,
+  );
+  tile.layout = { ...tile.layout, fx: tile.drag.fx, fy: tile.drag.fy };
 }
 
 export class CameraDeck {
@@ -196,6 +240,10 @@ export class CameraDeck {
         if (tile.drag.dragging) return; // never fight the user's own drag
         const size = ALL_SIZES.includes(next.size) ? next.size : tile.layout.size;
         tile.layout = { fx: clamp(Number(next.fx) || 0, 0, 1), fy: clamp(Number(next.fy) || 0, 0, 1), size };
+        // Untouched tiles are stacked by this screen from its own tile size (no overlap),
+        // until someone moves or resizes one and a real position takes over.
+        tile.slot = next.auto ? Number(next.slot) || 0 : null;
+        tile.drag.autoPlace = next.auto ? () => stackAuto(tile) : null;
         if (remote) {
           // Glide to the new spot instead of teleporting.
           el.classList.add('remote-move');
@@ -205,7 +253,8 @@ export class CameraDeck {
         el.classList.remove('size-s', 'size-m', 'size-l', 'size-min');
         el.classList.add(`size-${size}`);
         for (const b of tools.querySelectorAll('[data-size]')) b.classList.toggle('active', b.dataset.size === size);
-        tile.drag.place(tile.layout.fx, tile.layout.fy);
+        if (tile.drag.autoPlace) tile.drag.autoPlace();
+        else tile.drag.place(tile.layout.fx, tile.layout.fy);
         // The width changes with the size class (animated), so settle the position afterwards.
         requestAnimationFrame(() => tile.drag.reflow());
         setTimeout(() => tile.drag.reflow(), 260);
@@ -213,13 +262,16 @@ export class CameraDeck {
 
       /** A local size change: apply it, then share it with the room. */
       setSize: (size) => {
-        tile.applyLayout({ ...tile.layout, size });
+        // An auto tile becomes a real, shared position at its current spot.
+        tile.applyLayout({ ...tile.layout, fx: tile.drag.fx, fy: tile.drag.fy, size });
         this.onLayout?.(key, { ...tile.layout });
       },
     };
 
     tile.drag = new DraggableCamera(el, {
       onDrag: (fx, fy, final) => {
+        tile.slot = null;
+        tile.drag.autoPlace = null;
         tile.layout = { ...tile.layout, fx, fy };
         this.onLayout?.(key, { ...tile.layout, final });
       },
@@ -230,7 +282,10 @@ export class CameraDeck {
     });
     // Double-click a tile (or tap the badge) to cycle size / restore from badge.
     el.addEventListener('dblclick', () => tile.setSize(tile.layout.size === 'min' ? 'm' : SIZES[(SIZES.indexOf(tile.layout.size) + 1) % 3]));
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      // Only a tap on the badge itself restores it; a click on the size buttons has already
+      // been handled (before, choosing "minimize" was immediately undone by this handler).
+      if (e.target.closest('.cam-tools')) return;
       if (tile.layout.size === 'min' && !tile.drag.moved) tile.setSize('m');
     });
 

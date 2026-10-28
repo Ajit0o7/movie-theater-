@@ -155,13 +155,14 @@ test('restarting the same file gets a new source id, so clients reload it', () =
 
 test('camera tiles get distinct default spots, anyone can move any tile, input is clamped', () => {
   const room = roomWith('A', 'B', 'C', 'D');
-  const spots = [...room.participants.values()].map((p) => `${p.cam.fx},${p.cam.fy}`);
-  assert.equal(new Set(spots).size, 4, 'no two people start on the same spot');
+  const slots = [...room.participants.values()].map((p) => p.cam.slot);
+  assert.deepEqual(slots, [0, 1, 2, 3], 'each person starts in their own slot');
+  assert.ok([...room.participants.values()].every((p) => p.cam.auto), 'untouched tiles are auto-stacked by each client');
   assert.equal(room.participants.get('p0').cam.fx, 1, 'first tile starts at the right edge');
 
   // p1 moves p0's tile (any participant may arrange any tile)
   const moved = setCamLayout(room, 'p0', { fx: 0.25, fy: 0.5, size: 'l' });
-  assert.deepEqual(moved, { fx: 0.25, fy: 0.5, size: 'l' });
+  assert.deepEqual(moved, { fx: 0.25, fy: 0.5, size: 'l' }, 'a real position replaces the auto default');
   assert.deepEqual(publicParticipant(room.participants.get('p0')).cam, moved, 'late joiners receive it');
 
   assert.deepEqual(setCamLayout(room, 'p0', { fx: 9, fy: -3, size: 'huge' }), { fx: 1, fy: 0, size: 'l' }, 'clamped; bad size keeps the old one');

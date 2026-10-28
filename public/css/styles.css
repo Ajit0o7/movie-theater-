@@ -139,6 +139,7 @@ body:not(.has-source) .click-shield { display: none; }
 /* ---------- HUD ---------- */
 .hud {
   position: fixed; left: 0; right: 0; z-index: 20;
+  pointer-events: none; /* the bars' empty gradient areas let clicks through to the tiles below */
   transition: opacity var(--hud-fade) var(--ease), transform var(--hud-fade) var(--ease);
 }
 .hud-top {
@@ -220,7 +221,8 @@ body.is-playing .cam-label { backdrop-filter: none; }
 
 /* Idle: fade HUD, hide cursor */
 body.idle { cursor: none; }
-body.idle .hud { opacity: 0; pointer-events: none; }
+.hud > * { pointer-events: auto; }
+body.idle .hud, body.idle .hud > * { opacity: 0; pointer-events: none; }
 body.idle .hud-top { transform: translateY(-12px); }
 body.idle .hud-bottom { transform: translateY(12px); }
 body.idle .cam-tools { opacity: 0 !important; }
