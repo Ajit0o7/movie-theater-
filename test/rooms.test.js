@@ -177,3 +177,34 @@ test('a freed slot is reused by the next person to join', () => {
   addParticipant(room, 'p9', 'New');
   assert.deepEqual(room.participants.get('p9').cam, spot);
 });
+
+test('subtitles are shared per movie and dropped when the movie changes', async () => {
+  const { setSubtitles, currentSubtitles, clearSubtitles } = await import('../server/rooms.js');
+  const room = roomWith('A', 'B');
+  assert.throws(() => setSubtitles(room, 'p0', { name: 'x.srt', text: '1\n00:00:01,000 --> 00:00:02,000\nHi' }), /movie/);
+  setSource(room, 'p0', { type: 'url', url: 'https://example.com/m.mp4' });
+  assert.throws(() => setSubtitles(room, 'p1', { name: 'x.srt', text: '   ' }), /empty/);
+  assert.throws(() => setSubtitles(room, 'p1', { text: 'x'.repeat(1_500_001) }), /too large/);
+  const subs = setSubtitles(room, 'p1', { name: 'film.en.srt', text: 'data' });
+  assert.equal(subs.by, 'B');
+  assert.equal(currentSubtitles(room).name, 'film.en.srt');
+  setSource(room, 'p0', { type: 'url', url: 'https://example.com/other.mp4' });
+  assert.equal(currentSubtitles(room), null, 'a new movie starts without the old subtitles');
+  setSource(room, 'p0', { type: 'screen' });
+  assert.throws(() => setSubtitles(room, 'p0', { text: 'data' }), /screen share/);
+  clearSubtitles(room);
+});
+
+test('reactions are stamped with the movie time for timeline moments', async () => {
+  const { recordMoment } = await import('../server/rooms.js');
+  const room = roomWith('A');
+  assert.equal(recordMoment(room, '😂', 0), null, 'nothing playing');
+  setSource(room, 'p0', { type: 'url', url: 'https://example.com/m.mp4' }, 0);
+  applySyncEvent(room, 'p0', { action: 'PLAY', time: 100 }, 0);
+  assert.equal(recordMoment(room, '😂', 2500), 102.5);
+  assert.deepEqual(room.moments, [{ t: 102.5, emoji: '😂' }]);
+  setSource(room, 'p0', { type: 'url', url: 'https://example.com/n.mp4' }, 3000);
+  assert.deepEqual(room.moments, [], 'moments belong to one movie');
+  setSource(room, 'p0', { type: 'screen' }, 3000);
+  assert.equal(recordMoment(room, '😂', 4000), null, 'a live screen share has no timeline');
+});

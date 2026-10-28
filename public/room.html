@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/css/styles.css">
   <!-- Fetch every module in parallel instead of discovering them import by import. -->
   <link rel="modulepreload" href="/js/room.js">
+  <link rel="modulepreload" href="/js/subtitles.js">
   <link rel="modulepreload" href="/js/util.js">
   <link rel="modulepreload" href="/js/rtc.js">
   <link rel="modulepreload" href="/js/codecs.js">
@@ -50,6 +51,7 @@
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
       <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+      <symbol id="i-cc" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M10.5 10.2a2.2 2.2 0 1 0 0 3.6M17 10.2a2.2 2.2 0 1 0 0 3.6"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
     </defs>
   </svg>
@@ -61,6 +63,7 @@
     <video id="player" class="player" playsinline preload="auto"></video>
     <!-- Catches clicks over the movie (incl. the YouTube iframe) so every play/pause goes through room sync. -->
     <div id="click-shield" class="click-shield" aria-hidden="true"></div>
+    <div id="subtitles" class="subtitles" aria-hidden="true"></div>
 
     <div id="empty-state" class="stage-message" hidden>
       <p class="eyebrow">Nothing playing</p>
@@ -93,6 +96,7 @@
   <div id="cameras" class="cameras-layer" aria-label="Webcams"></div>
   <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="drop-hint" class="drop-hint" hidden><div><svg class="icon"><use href="#i-cc"/></svg><strong>Drop subtitles</strong><span>.srt or .vtt, shared with everyone</span></div></div>
 
   <!-- Top bar -->
   <header id="topbar" class="hud hud-top">
@@ -137,6 +141,7 @@
         </div>
       </div>
       <div class="hud-group hud-right">
+        <button class="hud-btn" data-action="open-subs" id="subs-btn" title="Subtitles (S)"><svg class="icon"><use href="#i-cc"/></svg></button>
         <button class="hud-btn" data-action="open-mixer" title="Sound mixer"><svg class="icon"><use href="#i-sliders"/></svg></button>
         <button class="hud-btn" data-action="toggle-chat" id="chat-btn" title="Chat (C)"><svg class="icon"><use href="#i-chat"/></svg><span class="badge" id="chat-badge" hidden>0</span></button>
         <button class="hud-btn" data-action="toggle-fullscreen" id="fs-btn" title="Fullscreen (F)"><svg class="icon"><use href="#i-expand"/></svg></button>
@@ -245,6 +250,44 @@
       <label class="toggle"><input type="checkbox" id="ambilight-toggle" checked><span>Ambilight glow</span></label>
       <p class="hint" id="volume-locked-note" hidden>On iPhone and iPad, the side buttons set the loudness; these sliders can only mute (drag to 0).</p>
       <p class="hint">Movie audio is sent as clean stereo with echo cancellation and noise suppression turned off. Voice chat has those filters on.</p>
+    </div>
+  </dialog>
+
+  <!-- Subtitles -->
+  <dialog id="subs-dialog" class="dialog">
+    <div class="dialog-body">
+      <div class="dialog-head">
+        <h2>Subtitles</h2>
+        <button class="icon-btn" data-action="close-dialog" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="subs-current">
+        <div>
+          <strong id="subs-name">No subtitles</strong>
+          <span id="subs-meta">Load an .srt or .vtt file; everyone in the room gets it. You can also drop the file anywhere on the screen.</span>
+        </div>
+        <label class="btn btn-ghost"><input type="file" id="subs-file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden>Load file…</label>
+      </div>
+      <div class="subs-row" id="subs-loaded-row" hidden>
+        <label class="toggle"><input type="checkbox" id="subs-show" checked><span>Show subtitles (S)</span></label>
+        <button class="btn btn-ghost btn-sm" data-action="remove-subs">Remove for everyone</button>
+      </div>
+      <div class="subs-row">
+        <span class="subs-label">Timing <small>([ and ] keys)</small></span>
+        <div class="offset-control">
+          <button class="btn btn-ghost btn-sm" data-action="subs-earlier" title="Show earlier ([)">−0.25s</button>
+          <output id="subs-offset">0.00s</output>
+          <button class="btn btn-ghost btn-sm" data-action="subs-later" title="Show later (])">+0.25s</button>
+          <button class="btn btn-ghost btn-sm" data-action="subs-reset">Reset</button>
+        </div>
+      </div>
+      <div class="subs-row"><span class="subs-label">Size</span><div class="segmented" id="subs-size" role="radiogroup" aria-label="Subtitle size"></div></div>
+      <div class="subs-row"><span class="subs-label">Color</span><div class="segmented" id="subs-color" role="radiogroup" aria-label="Subtitle color"></div></div>
+      <div class="subs-row"><span class="subs-label">Font</span><div class="segmented" id="subs-font" role="radiogroup" aria-label="Subtitle font"></div></div>
+      <label class="slider-field">
+        <span>Background <output id="subs-bg-out">60%</output></span>
+        <input type="range" id="subs-bg" min="0" max="100" value="60">
+      </label>
+      <p class="hint">Style and timing are yours only; the subtitle file is shared.</p>
     </div>
   </dialog>
 

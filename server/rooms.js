@@ -53,6 +53,8 @@ export function createRoom(id, now = Date.now()) {
     createdAt: now,
     participants: new Map(), // socketId -> { id, name, joinedAt, media: { [streamId]: 'camera' | 'movie' }, status }
     chat: [],
+    subtitles: null, // { id, sourceId, name, text, by }: shared with everyone, tied to one source
+    moments: [], // [{ t, emoji }]: reactions stamped with the movie time, for the timeline
     playback: {
       source: emptySource(),
       playing: false,
@@ -251,6 +253,9 @@ export function setSource(room, actorId, input, now = Date.now()) {
     // The owner's name lets guests see who they are waiting for if the owner drops.
     source.ownerName = room.participants.get(actorId)?.name ?? null;
   }
+  // Subtitles and reaction moments belong to the previous movie.
+  room.subtitles = null;
+  room.moments = [];
   // Private (never sent to clients): recognises the owner's tab if it reconnects.
   room.sourceOwnerClientId = type === 'none' ? null : room.participants.get(actorId)?.clientId ?? null;
   room.playback = {
@@ -305,6 +310,47 @@ export function applyHeartbeat(room, actorId, beat, now = Date.now()) {
     }
   }
   return changed ? snapshotPlayback(room.playback, now) : null;
+}
+
+export const MAX_SUBTITLE_CHARS = 1_500_000;
+export const MAX_MOMENTS = 5000;
+const TIMELINE_TYPES = ['url', 'youtube', 'local', 'stream'];
+
+/** Shares a subtitle file with the room. Subtitles always belong to the current movie. */
+export function setSubtitles(room, actorId, input) {
+  const sourceId = room.playback.source.id;
+  if (!sourceId || !TIMELINE_TYPES.includes(room.playback.source.type)) {
+    throw new RoomError('NO_SOURCE', 'Start a movie (not a screen share) first, then add its subtitles.');
+  }
+  const text = typeof input?.text === 'string' ? input.text : '';
+  if (!text.trim()) throw new RoomError('BAD_SUBS', 'That subtitle file is empty.');
+  if (text.length > MAX_SUBTITLE_CHARS) throw new RoomError('BAD_SUBS', 'That subtitle file is too large.');
+  room.subtitles = {
+    id: randomBytes(6).toString('base64url'),
+    sourceId,
+    name: String(input.name ?? '').slice(0, 200) || 'Subtitles',
+    text,
+    by: room.participants.get(actorId)?.name ?? null,
+  };
+  return room.subtitles;
+}
+
+export function clearSubtitles(room) {
+  room.subtitles = null;
+}
+
+/** The subtitles for what is playing now (null if none, or they belong to an older movie). */
+export function currentSubtitles(room) {
+  return room.subtitles && room.subtitles.sourceId === room.playback.source.id ? room.subtitles : null;
+}
+
+/** Stamps a reaction with the movie time, so the timeline can show where people reacted. */
+export function recordMoment(room, emoji, now = Date.now()) {
+  if (!room.playback.source.id || !TIMELINE_TYPES.includes(room.playback.source.type)) return null;
+  const t = Math.round(currentTime(room.playback, now) * 10) / 10;
+  room.moments.push({ t, emoji });
+  if (room.moments.length > MAX_MOMENTS) room.moments.shift();
+  return t;
 }
 
 export function addChatMessage(room, authorId, text, now = Date.now()) {

@@ -268,3 +268,32 @@ test('the stream ends if the host does not return in time, or leaves on purpose'
   await ended;
   assert.ok(Date.now() - t0 < 250, 'no grace period for a deliberate leave');
 });
+
+test('subtitles reach everyone and late joiners; reactions carry the movie time', async () => {
+  const a = await client();
+  const b = await client();
+  await emit(a, 'room:join', { roomId: 'subs', name: 'Ajit' });
+  await emit(b, 'room:join', { roomId: 'subs', name: 'Friend' });
+  const seenSource = once(b, 'sync:state');
+  await emit(a, 'sync:source', { type: 'url', url: 'https://example.com/m.mp4', name: 'm.mp4' });
+  await seenSource;
+  const got = once(b, 'subs:state');
+  const res = await emit(a, 'subs:set', { name: 'm.en.srt', text: '1\n00:00:01,000 --> 00:00:02,000\nHello' });
+  assert.equal(res.ok, true);
+  const { subs, actor } = await got;
+  assert.equal(subs.name, 'm.en.srt');
+  assert.equal(actor, 'Ajit');
+
+  const reaction = once(b, 'reaction');
+  a.emit('reaction', { emoji: '😱' });
+  assert.equal(typeof (await reaction).t, 'number');
+
+  const late = await client();
+  const join = await emit(late, 'room:join', { roomId: 'subs', name: 'Late' });
+  assert.equal(join.subtitles.name, 'm.en.srt');
+  assert.equal(join.moments.length, 1);
+
+  const cleared = once(late, 'subs:state');
+  b.emit('subs:clear');
+  assert.equal((await cleared).subs, null);
+});

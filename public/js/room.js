@@ -16,7 +16,8 @@ import {
   resolutionLabel,
 } from './media.js';
 import { Reactions } from './reactions.js';
-import { PeerManager, meshBudget } from './rtc.js';
+import { MOVIE_JITTER_BUFFER_MS, PeerManager, meshBudget } from './rtc.js';
+import { DEFAULT_SUB_STYLE, setupSubtitles } from './subtitles-ui.js';
 import { CinemaSync, ClockSync } from './sync.js';
 import { $, $$, formatTime, h, storage, toast } from './util.js';
 import { checkVideoLink } from './links.js';
@@ -42,12 +43,28 @@ const settings = {
   quality: DEFAULT_PRESET,
   ...storage.get('cinema.settings', {}),
 };
+settings.subStyle = { ...DEFAULT_SUB_STYLE, ...settings.subStyle };
 if (!STREAM_PRESETS[settings.quality]) settings.quality = DEFAULT_PRESET;
 const currentPreset = () => STREAM_PRESETS[settings.quality];
 
 // The thing actually playing: the <video> element, or the YouTube adapter.
 let yt = null;
 const media = () => yt ?? player;
+
+/**
+ * The movie time this viewer is looking at, for subtitles. A guest watching a host's
+ * stream sees it after the playout buffer plus encode/network delay, so subtitles lag
+ * the room clock by the same amount. A screen share has no timeline.
+ */
+const STREAM_VIEW_DELAY_S = MOVIE_JITTER_BUFFER_MS / 1000 + 0.2;
+function viewerTime() {
+  const sync = session?.sync;
+  const type = sync?.source.type;
+  if (!sync || type === 'none' || type === 'screen' || !type) return null;
+  if (type === 'stream' && !sync.isOwner) return Math.max(0, sync.expectedTime() - (sync.state?.playing ? STREAM_VIEW_DELAY_S : 0));
+  return sync.localTime();
+}
+
 
 const local = {
   name: '',
@@ -107,6 +124,29 @@ async function loadIceConfig() {
 let session = null; // per-connection: { selfId, rtc, sync, chat, reactions, peers, remoteStreams }
 let joinedOnce = false;
 let statsOpen = false;
+
+// Subtitles (and other overlays) sit just above the control bar, whose height varies.
+function measureHud() {
+  const hud = $('#hud');
+  const height = hud.offsetHeight - parseFloat(getComputedStyle(hud).paddingTop);
+  document.documentElement.style.setProperty('--hud-h', `${Math.round(height)}px`);
+}
+measureHud();
+window.addEventListener('resize', measureHud);
+
+const subtitles = setupSubtitles({
+  getTime: viewerTime,
+  getSource: () => session?.sync.source ?? null,
+  request: (event, payload) =>
+    new Promise((resolve) => {
+      if (!socket?.connected) return resolve({ error: 'Not connected.' });
+      socket.timeout(8000).emit(event, payload, (err, res) => resolve(err ? { error: 'The server did not respond. Try again.' } : res));
+    }),
+  send: (event, payload) => socket?.emit(event, payload),
+  toast,
+  style: settings.subStyle,
+  saveStyle: () => storage.set('cinema.settings', settings),
+});
 
 // ---------------------------------------------------------------------------
 // Join
@@ -268,6 +308,7 @@ async function joinRoom() {
   on('peer:struggling', ({ name }) => {
     toast(`${name}’s connection can’t keep up with this video, so it keeps buffering for them. A smaller file, or “Same file everywhere”, would help.`, { tone: 'warn', duration: 9000 });
   });
+  on('subs:state', ({ subs, actor }) => subtitles.applyState(subs, { actor }));
   on('cam:layout', ({ id, cam }) => {
     deck.get(id === session.selfId ? 'self' : id)?.applyLayout(cam, { remote: true });
   });
@@ -317,6 +358,7 @@ async function joinRoom() {
 
   chat.load(res.chat);
   sync.setInitialState(res.playback);
+  subtitles.applyState(res.subtitles, { quiet: true });
   renderPeople();
   return true;
 }
@@ -943,7 +985,10 @@ function ownerName(id) {
 }
 
 function onSyncState({ playback, prev, actor, actorId, action, sourceChanged, optimistic }) {
-  if (sourceChanged) renderSource();
+  if (sourceChanged) {
+    renderSource();
+    subtitles.onSourceChanged(playback.source);
+  }
   if (optimistic || action === 'INIT' || action === 'HEARTBEAT' || action === 'DURATION' || actorId === session.selfId) return;
   const who = actor || 'Someone';
   if (action === 'SOURCE' && sourceChanged) {
@@ -1225,6 +1270,11 @@ const actions = {
   'toggle-fullscreen': toggleFullscreen,
   'toggle-reactions': () => session?.reactions.toggleTray(),
   'copy-invite': copyInvite,
+  'open-subs': () => $('#subs-dialog').showModal(),
+  'remove-subs': () => subtitles.remove(),
+  'subs-earlier': () => subtitles.earlier(),
+  'subs-later': () => subtitles.later(),
+  'subs-reset': () => subtitles.resetOffset(),
   'toggle-stats': () => {
     statsOpen = !statsOpen;
     updateStats();
@@ -1313,6 +1363,9 @@ document.addEventListener('keydown', (e) => {
     v: toggleCam,
     r: () => session.reactions.toggleTray(),
     i: actions['toggle-stats'],
+    s: () => subtitles.toggleVisible() || $('#subs-dialog').showModal(),
+    '[': () => subtitles.earlier(),
+    ']': () => subtitles.later(),
     escape: () => session.chat.open && session.chat.toggle(false),
   }[key];
   if (handled) {

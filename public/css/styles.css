@@ -656,6 +656,55 @@ input[type="range"]:not(.timeline-input) {
 }
 .hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.5; }
 
+/* ---------- Subtitles ---------- */
+.subtitles {
+  --sub-scale: 1; --sub-color: #fff; --sub-bg: 0.6; --sub-font: var(--font-body);
+  position: absolute; left: 50%; bottom: calc(var(--hud-h, 132px) + 8px); z-index: 1;
+  transform: translateX(-50%); width: min(92vw, 1400px);
+  display: flex; flex-direction: column; align-items: center; gap: 0.25em;
+  pointer-events: none; text-align: center;
+  font-family: var(--sub-font); font-weight: 600; line-height: 1.3;
+  font-size: calc(clamp(16px, 3.4vh, 44px) * var(--sub-scale));
+  transition: bottom var(--hud-fade) var(--ease);
+}
+body.idle .subtitles { bottom: 6vh; }
+.sub-cue {
+  display: inline-block; padding: 0.12em 0.45em; border-radius: 0.2em;
+  color: var(--sub-color); background: rgba(0, 0, 0, var(--sub-bg));
+  /* Outline keeps text readable even with no background over bright scenes. */
+  text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px rgba(0, 0, 0, 0.9);
+  box-decoration-break: clone; -webkit-box-decoration-break: clone; white-space: pre-line;
+}
+
+.drop-hint {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; pointer-events: none;
+  background: rgba(7, 7, 9, 0.6); backdrop-filter: blur(6px);
+}
+.drop-hint > div {
+  display: grid; justify-items: center; gap: 8px; padding: 32px 44px; border-radius: var(--radius-lg);
+  border: 2px dashed var(--accent); background: var(--surface-strong); text-align: center;
+}
+.drop-hint .icon { width: 40px; height: 40px; color: var(--accent-2); }
+.drop-hint strong { font-family: var(--font-display); font-size: 22px; }
+.drop-hint span { color: var(--text-dim); font-size: 14px; }
+
+.subs-current {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: var(--radius); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
+}
+.subs-current > div { display: grid; gap: 4px; min-width: 0; flex: 1 1 220px; }
+.subs-current strong { font-family: var(--font-display); font-size: 15px; overflow-wrap: anywhere; }
+.subs-current span { color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.subs-current label.btn { cursor: pointer; }
+.subs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.subs-label { font-size: 14px; font-weight: 500; }
+.subs-label small { color: var(--text-faint); font-weight: 400; }
+.subs-row .segmented { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.offset-control { display: flex; align-items: center; gap: 6px; }
+.offset-control output { min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent-2); }
+.btn-sm { height: 34px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
+#subs-btn.on { color: var(--accent-2); }
+
 /* ---------- Small Screens ---------- */
 @media (max-width: 640px) {
   .landing-card { padding: 26px 20px; }

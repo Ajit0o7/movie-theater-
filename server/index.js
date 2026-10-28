@@ -15,7 +15,9 @@ import {
   addParticipant,
   applyHeartbeat,
   applySyncEvent,
+  clearSubtitles,
   createRoom,
+  currentSubtitles,
   expireAwaySource,
   findByClientId,
   generateRoomId,
@@ -24,11 +26,13 @@ import {
   listParticipants,
   publicParticipant,
   reclaimSource,
+  recordMoment,
   removeParticipant,
   setCamLayout,
   setMedia,
   setStatus,
   setSource,
+  setSubtitles,
   snapshotPlayback,
 } from './rooms.js';
 import { createIceProvider } from './ice.js';
@@ -43,7 +47,8 @@ export const HOST_GRACE_MS = 60 * 1000;
 export function createCinemaServer({ env = process.env, tls = null, ice = createIceProvider(env), hostGraceMs = HOST_GRACE_MS } = {}) {
   const app = express();
   const httpServer = tls ? createHttpsServer(tls, app) : createServer(app);
-  const io = new Server(httpServer, { maxHttpBufferSize: 1e6 });
+  // Room for a large subtitle file (MAX_SUBTITLE_CHARS); every other message is validated.
+  const io = new Server(httpServer, { maxHttpBufferSize: 5e6 });
   const rooms = new Map();
   const cleanupTimers = new Map();
 
@@ -180,6 +185,8 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
           peers: listParticipants(room).filter((p) => p.id !== socket.id),
           playback: snapshotPlayback(room.playback),
           chat: room.chat,
+          subtitles: currentSubtitles(room),
+          moments: room.moments,
         });
       } catch (err) {
         scheduleCleanup(target);
@@ -210,6 +217,23 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
       if (!room) return;
       const stored = setCamLayout(room, id, cam);
       if (stored) socket.to(room.id).emit('cam:layout', { id, cam: stored });
+    });
+
+    on('subs:set', (input, ack) => {
+      if (!room) return ack({ error: 'Not in a room.' });
+      try {
+        const subs = setSubtitles(room, socket.id, input);
+        io.to(room.id).emit('subs:state', { subs, actor: self()?.name });
+        ack({ ok: true });
+      } catch (err) {
+        ack({ error: err instanceof RoomError ? err.message : 'Could not add subtitles.' });
+      }
+    });
+
+    on('subs:clear', () => {
+      if (!room || !room.subtitles) return;
+      clearSubtitles(room);
+      io.to(room.id).emit('subs:state', { subs: null, actor: self()?.name });
     });
 
     on('sync:source', (input, ack) => {
@@ -265,7 +289,8 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
 
     on('reaction', ({ emoji }) => {
       if (!room || !isValidReaction(emoji)) return;
-      io.to(room.id).emit('reaction', { emoji, from: socket.id, name: self()?.name });
+      const t = recordMoment(room, emoji); // movie time, or null with no timeline (screen share)
+      io.to(room.id).emit('reaction', { emoji, from: socket.id, name: self()?.name, t });
     });
 
     // Closing the tab or navigating away is deliberate: end any stream right away.
