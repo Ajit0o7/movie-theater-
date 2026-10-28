@@ -63,9 +63,10 @@
 
   <!-- Edge-to-edge stage -->
   <main id="stage" class="stage">
-    <canvas id="ambilight" class="ambilight" aria-hidden="true"></canvas>
     <div id="yt-host" class="player yt-host" hidden></div>
     <video id="player" class="player" playsinline preload="auto"></video>
+    <!-- Behind the video (z-index 0); in front of it, with the picture cut out, when the file has black bars. -->
+    <canvas id="ambilight" class="ambilight" aria-hidden="true"></canvas>
     <!-- Catches clicks over the movie (incl. the YouTube iframe) so every play/pause goes through room sync. -->
     <div id="click-shield" class="click-shield" aria-hidden="true"></div>
     <div id="subtitles" class="subtitles" aria-hidden="true"></div>

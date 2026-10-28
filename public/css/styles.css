@@ -220,10 +220,28 @@ h1, h2, h3, .brand {
 body:not(.has-source) .click-shield { display: none; }
 
 .ambilight {
+  --feather: radial-gradient(closest-side, #000 62%, transparent 100%);
   position: absolute; left: -5%; top: -5%; width: 110%; height: 110%; z-index: 0; pointer-events: none;
   opacity: 0; transition: opacity 600ms;
+  /* Brightest next to the picture, fading toward the screen edges like light on a wall. */
+  -webkit-mask-image: var(--feather);
+  mask-image: var(--feather);
 }
 .ambilight.lit { opacity: 0.6; }
+/* The video has black bars baked in: glow in front of it, with the picture (--pic-*) cut out. */
+.ambilight.over {
+  z-index: 1;
+  -webkit-mask-image: var(--feather), linear-gradient(#000, #000);
+  mask-image: var(--feather), linear-gradient(#000, #000);
+  -webkit-mask-size: 100% 100%, var(--pic-w) var(--pic-h);
+  mask-size: 100% 100%, var(--pic-w) var(--pic-h);
+  -webkit-mask-position: 0 0, var(--pic-x) var(--pic-y);
+  mask-position: 0 0, var(--pic-x) var(--pic-y);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-composite: source-out;
+  mask-composite: subtract;
+}
 
 .stage-message {
   position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center;

@@ -37,7 +37,7 @@ deck.onLayout = (key, { fx, fy, size, final }) => {
   if (!session || !socket?.connected) return;
   socket.emit('cam:layout', { id: key === 'self' ? session.selfId : key, cam: { fx, fy, size } });
 };
-const ambilight = new Ambilight(player, $('#ambilight'));
+const ambilight = new Ambilight(player, $('#ambilight'), { getBox: pictureBox });
 
 const settings = {
   movieVolume: 1,
@@ -136,7 +136,11 @@ function measureHud() {
   document.documentElement.style.setProperty('--hud-h', `${Math.round(height)}px`);
 }
 measureHud();
-window.addEventListener('resize', measureHud);
+window.addEventListener('resize', () => {
+  measureHud();
+  ambilight.relayout();
+});
+player.addEventListener('resize', () => ambilight.relayout()); // a stream changed resolution
 
 // Each friend's voice panned toward their camera tile (opt-in; best with headphones).
 const spatial = new SpatialVoices({ getContext: () => detector.ensureContext() });
