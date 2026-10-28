@@ -16,9 +16,10 @@ import {
   resolutionLabel,
 } from './media.js';
 import { Reactions } from './reactions.js';
-import { PeerManager } from './rtc.js';
+import { PeerManager, meshBudget } from './rtc.js';
 import { CinemaSync, ClockSync } from './sync.js';
 import { $, $$, formatTime, h, storage, toast } from './util.js';
+import { checkVideoLink } from './links.js';
 import { YouTubeVideo, parseYouTubeUrl, youtubeQualityLabel } from './youtube.js';
 
 const roomId = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '').toLowerCase();
@@ -89,7 +90,20 @@ try {
 } catch {
   /* BroadcastChannel unavailable */
 }
-let iceServers = [];
+let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+let relayConfigured = false;
+
+/** Fetched on every (re)connect: TURN credentials from the server are short-lived. */
+async function loadIceConfig() {
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    const cfg = await res.json();
+    if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) iceServers = cfg.iceServers;
+    relayConfigured = Boolean(cfg.relay);
+  } catch {
+    /* keep the previous servers (or the STUN default) */
+  }
+}
 let session = null; // per-connection: { selfId, rtc, sync, chat, reactions, peers, remoteStreams }
 let joinedOnce = false;
 let statsOpen = false;
@@ -133,12 +147,7 @@ $('#join-form').addEventListener('submit', async (e) => {
   // This click is our user gesture: unlock audio playback and the AudioContext now.
   detector.ensureContext();
 
-  try {
-    const res = await fetch('/api/config');
-    iceServers = (await res.json()).iceServers;
-  } catch {
-    iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
-  }
+  await loadIceConfig();
 
   await Promise.all([
     $('#join-cam').checked ? enableCamera({ quiet: true }) : null,
@@ -192,6 +201,7 @@ function connect() {
     socket.on('disconnect', (reason) => {
       if (!joinedOnce) return;
       teardownSession();
+      if (replaced) releaseOwnMedia();
       if (replaced) toast('You joined this room from another tab or connection. Reload this page to watch here.', { tone: 'warn', duration: 15000 });
       else if (reason !== 'io client disconnect') toast('Connection lost. Reconnecting…', { tone: 'error', duration: 4000 });
     });
@@ -207,6 +217,7 @@ async function joinRoom() {
   const generation = ++joinGeneration;
   const socketId = socket.id;
   const stale = () => generation !== joinGeneration || socket.id !== socketId || !socket.connected;
+  if (joinedOnce) await loadIceConfig(); // refresh short-lived TURN credentials on reconnect
   const clock = new ClockSync(socket);
   await clock.calibrate();
   if (stale()) return false;
@@ -226,18 +237,36 @@ async function joinRoom() {
   rtc.addEventListener('state', ({ detail: { peerId, state } }) => {
     if (state !== 'failed') return;
     const name = session?.peers.get(peerId)?.name ?? 'someone';
-    toast(`Couldn’t connect directly to ${name}, so their camera, voice and streams won’t come through. A firewall or strict network is blocking it; a TURN server fixes this (see README).`, { tone: 'error', duration: 10000 });
+    toast(
+      relayConfigured
+        ? `Couldn’t connect to ${name}, even through the relay server. One of you may be offline or behind a very strict firewall; try reloading.`
+        : `Couldn’t connect to ${name}: one of your networks (mobile data, campus, hotel or office Wi-Fi) blocks direct connections. The site owner can fix this by adding a free TURN relay (README → “TURN relay”).`,
+      { tone: 'error', duration: 12000 },
+    );
   });
   sync.addEventListener('state', ({ detail }) => onSyncState(detail));
+  sync.addEventListener('struggling', () => {
+    const src = session?.sync.source;
+    toast(
+      src?.type === 'youtube'
+        ? 'Your connection is struggling with this video, so it keeps pausing to load. YouTube lowers the quality automatically; closing other downloads or moving closer to the Wi-Fi helps.'
+        : 'Your connection is slower than this video needs, so it keeps pausing to load, and jumping ahead can’t fix that. Closing other downloads helps. Otherwise ask the host for a smaller file, or use “Same file everywhere” with your own copy.',
+      { tone: 'warn', duration: 14000 },
+    );
+    socket.emit('sync:struggling');
+  });
   sync.addEventListener('blocked', ({ detail }) => ($('#unblock').hidden = !detail.blocked));
 
   on('peer:joined', (p) => {
     addPeer(p);
-    toast(`${p.name} joined`);
+    if (session.sync.source.ownerId !== p.id) toast(`${p.name} joined`); // a returning host gets "is back"
   });
   on('peer:left', ({ id, name }) => {
     removePeer(id);
-    if (name) toast(`${name} left`);
+    if (name && !session.sync.source.ownerAway) toast(`${name} left`); // a dropped host gets "lost connection"
+  });
+  on('peer:struggling', ({ name }) => {
+    toast(`${name}’s connection can’t keep up with this video, so it keeps buffering for them. A smaller file, or “Same file everywhere”, would help.`, { tone: 'warn', duration: 9000 });
   });
   on('cam:layout', ({ id, cam }) => {
     deck.get(id === session.selfId ? 'self' : id)?.applyLayout(cam, { remote: true });
@@ -277,6 +306,11 @@ async function joinRoom() {
   for (const p of res.peers) addPeer(p);
   await rtc.setTrack('camVideo', local.camTrack);
   await rtc.setTrack('micAudio', local.micTrack);
+  const own = ownMovieTracks(); // still hosting after a reconnect: keep sending
+  if (own.video || own.audio) {
+    await rtc.setTrack('movieVideo', own.video);
+    await rtc.setTrack('movieAudio', own.audio);
+  }
   socket.emit('media:announce', { streamId: rtc.cameraStreamId, kind: 'camera' });
   socket.emit('media:announce', { streamId: rtc.movieStreamId, kind: 'movie' });
   socket.emit('peer:status', localStatus());
@@ -303,8 +337,15 @@ function teardownSession() {
   session.sync.destroy();
   session.chat.destroy();
   session.reactions.destroy();
-  releaseOwnMedia();
+  // A stream or screen share we host survives a dropped connection: the server keeps the
+  // source for a grace period and joinRoom() re-attaches our tracks to the new connection.
   session = null;
+}
+
+/** The movie tracks this client is broadcasting, if any (screen capture or captured file). */
+function ownMovieTracks() {
+  const media = local.own?.display ?? local.own?.capture ?? null;
+  return { video: media?.getVideoTracks()[0] ?? null, audio: media?.getAudioTracks()[0] ?? null };
 }
 
 // ---------------------------------------------------------------------------
@@ -432,7 +473,11 @@ function enableMic(opts) {
 async function startMic({ quiet = false } = {}) {
   if (local.micTrack?.readyState === 'live') return;
   try {
-    local.micTrack = await getMicTrack();
+    const track = await getMicTrack();
+    // A Bluetooth headset dying or a USB mic being unplugged ends the track; without this the
+    // mic button stayed "on" while nothing was sent.
+    track.addEventListener('ended', () => onMicEnded(track));
+    local.micTrack = track;
     detector.watch('self', local.micTrack, (level) => {
       $('#mic-meter').style.setProperty('--level', level.toFixed(2));
       deck.get('self')?.setSpeaking(level > 0.08);
@@ -443,6 +488,29 @@ async function startMic({ quiet = false } = {}) {
   }
   await session?.rtc.setTrack('micAudio', local.micTrack);
   publishStatus();
+}
+
+async function onMicEnded(track) {
+  if (local.micTrack !== track) return;
+  const wasMuted = !track.enabled;
+  local.micTrack = null;
+  detector.unwatch('self');
+  await session?.rtc.setTrack('micAudio', null);
+  publishStatus();
+  // Fall back to whatever microphone the system now uses (e.g. the laptop's), keeping the
+  // user's mute state; if there is none, the mic is shown as off.
+  await new Promise((r) => setTimeout(r, 500));
+  if (local.micTrack) return;
+  await enableMic({ quiet: true });
+  if (local.micTrack) {
+    if (wasMuted) {
+      local.micTrack.enabled = false;
+      publishStatus();
+    }
+    toast(`Microphone disconnected. Switched to “${local.micTrack.label || 'the default microphone'}”.`, { tone: 'warn', duration: 6000 });
+  } else {
+    toast('Microphone disconnected. Your mic is off; click the mic button to turn it back on.', { tone: 'warn', duration: 6000 });
+  }
 }
 
 function toggleMic() {
@@ -500,14 +568,20 @@ $('#url-form').addEventListener('submit', async (e) => {
     }
     return;
   }
-  let name = url;
+  const link = checkVideoLink(url, location.protocol);
+  if (link.error) {
+    toast(link.error, { tone: 'error', duration: 10000 });
+    return;
+  }
+  if (link.note) toast(link.note);
+  let name = link.url;
   try {
-    name = decodeURIComponent(new URL(url).pathname.split('/').pop()) || url;
+    name = decodeURIComponent(new URL(link.url).pathname.split('/').pop()) || link.url;
   } catch {
     /* keep raw url */
   }
   releaseOwnMedia();
-  if (await setSource({ type: 'url', id: newSourceId(), url, name })) $('#url-input').value = '';
+  if (await setSource({ type: 'url', id: newSourceId(), url: link.url, name })) $('#url-input').value = '';
 });
 
 $('#stream-file').addEventListener('change', async (e) => {
@@ -515,13 +589,14 @@ $('#stream-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file || !session) return;
   if (!canCaptureElement()) {
-    toast('This browser can’t stream files. Try Chrome, Edge or Firefox.', { tone: 'error' });
+    toast('This browser (e.g. Safari) can’t stream a file. Use “Same file everywhere” instead (each person opens their own copy), or host from Chrome, Edge or Firefox.', { tone: 'error', duration: 9000 });
     return;
   }
   releaseOwnMedia();
   const id = newSourceId();
   local.own = { key: plannedKey('stream', id), type: 'stream', url: URL.createObjectURL(file), pending: true };
   if (!(await setSource({ type: 'stream', id, name: file.name }))) releaseOwnMedia();
+  else warnIfBigRoom();
 });
 
 $('#local-file').addEventListener('change', async (e) => {
@@ -570,11 +645,36 @@ async function shareScreen() {
     if (local.own?.display === display) setSource({ type: 'none' });
   });
   if (!display.getAudioTracks().length) {
-    toast('No audio captured. Share a browser tab and tick “Share tab audio” to include the soundtrack.', { tone: 'warn', duration: 6000 });
+    // Only Chromium tabs (and, on Windows, the whole screen) can share sound; on macOS and
+    // Linux a window or the screen never includes audio.
+    const surface = video?.getSettings?.().displaySurface;
+    toast(
+      surface === 'browser'
+        ? 'No sound is being shared. Share again and tick “Share tab audio” in the browser’s prompt.'
+        : 'No sound is being shared. Browsers can only share sound from a browser tab (or, on Windows, the entire screen with “Share system audio”). To include the soundtrack, play the movie in a browser tab and share that tab.',
+      { tone: 'warn', duration: 12000 },
+    );
   }
   await session.rtc.setTrack('movieVideo', video ?? null);
   await session.rtc.setTrack('movieAudio', display.getAudioTracks()[0] ?? null);
   if (!(await setSource({ type: 'screen', id, name }))) releaseOwnMedia();
+  else warnIfBigRoom();
+}
+
+/**
+ * Streaming and screen sharing send a separate copy to every viewer from the host's upload.
+ * Quality per viewer is already reduced in big rooms; tell the host what remains, and which
+ * modes cost them nothing.
+ */
+function warnIfBigRoom() {
+  const viewers = session?.peers.size ?? 0;
+  if (viewers < 3) return;
+  const budget = meshBudget(currentPreset(), viewers);
+  const total = ((budget.movieBitrate * viewers) / 1e6).toFixed(0);
+  toast(
+    `Streaming to ${viewers} people uses about ${total} Mbps of your upload (${budget.movieHeight}p each). If it stutters, pick Eco, or use “Video link” or “Same file everywhere”, which send no video from you.`,
+    { tone: 'warn', duration: 12000 },
+  );
 }
 
 /** Stops whatever this client was broadcasting (screen or streamed file). */
@@ -604,7 +704,8 @@ function clearPlayer() {
 }
 
 function loadPlayer(key, { src = null, srcObject = null, muted = false }) {
-  player.muted = muted;
+  player.dataset.forceMuted = muted ? '1' : '';
+  player.muted = muted || settings.movieVolume === 0;
   if (player.dataset.key === key && (srcObject ? player.srcObject === srcObject : true)) return;
   player.dataset.key = key;
   player.pause();
@@ -669,7 +770,14 @@ function renderSource() {
       break;
     case 'stream':
     case 'screen':
-      if (isOwner && local.own) {
+      if (isOwner && !local.own) {
+        // The server handed us back a stream we can no longer send (the page was reloaded
+        // or the media was lost), so end it rather than leave everyone waiting.
+        clearPlayer();
+        show('#empty-state');
+        setSource({ type: 'none' });
+        toast('Your stream stopped when the page reloaded. Choose it again to keep watching.', { tone: 'warn', duration: 8000 });
+      } else if (isOwner && local.own) {
         show(null);
         if (source.type === 'stream') {
           loadPlayer(key, { src: local.own.url });
@@ -686,12 +794,18 @@ function renderSource() {
         } else {
           clearPlayer();
           const title = $('#waiting-stream-title');
-          title.textContent = `Connecting to ${ownerName(source.ownerId)}’s stream…`;
+          const host = source.ownerName || ownerName(source.ownerId);
+          title.textContent = source.ownerAway
+            ? `${host} lost their connection. Waiting up to a minute for them to come back…`
+            : `Connecting to ${host}’s stream…`;
           show('#waiting-stream');
           clearTimeout(waitingTimer);
           waitingTimer = setTimeout(() => {
             if ($('#waiting-stream').hidden || session?.sync.source.id !== source.id) return;
-            title.textContent = `Still connecting to ${ownerName(source.ownerId)}’s stream. If this doesn’t change, a firewall may be blocking direct connections (see “TURN server” in the README).`;
+            if (session?.sync.source.ownerAway) return;
+            title.textContent = relayConfigured
+              ? `Still connecting to ${host}’s stream…`
+              : `Still connecting to ${host}’s stream. If this doesn’t change, a network is blocking direct connections; a TURN relay fixes it (README → “TURN relay”).`;
           }, 15000);
         }
       }
@@ -730,6 +844,58 @@ function unmountYouTube() {
   player.hidden = false;
   session?.sync.setVideo(player);
 }
+
+/**
+ * Files that "play" but are silent or black. Browsers have no decoders for Dolby (AC-3/E-AC-3)
+ * or DTS audio, and often none for HEVC/H.265 video, which are common in .mkv files; the
+ * player then runs without sound or picture and no error is raised. A few seconds into
+ * playback, check that audio was decoded and a picture exists, and explain the fix.
+ */
+const decodeChecked = new Set(); // keys checked, or with a check scheduled
+function checkDecodability() {
+  const source = session?.sync.source;
+  const key = player.dataset.key;
+  if (!source || !key || decodeChecked.has(key) || player.srcObject) return;
+  if (!['url', 'local', 'stream'].includes(source.type) || (source.type === 'stream' && source.ownerId !== session.selfId)) return;
+  // Several 'playing' events can fire in quick succession (buffering, sync seeks): one check.
+  decodeChecked.add(key);
+  const startedAt = player.currentTime;
+  setTimeout(() => {
+    if (player.dataset.key !== key || player.paused || player.currentTime - startedAt < 2) {
+      decodeChecked.delete(key); // not enough playback to judge yet: check again on the next play
+      return;
+    }
+    const noPicture = player.videoWidth === 0;
+    // Chrome/Edge count decoded audio bytes; Firefox says whether there is audio at all.
+    const noSound =
+      ('webkitAudioDecodedByteCount' in player && player.webkitAudioDecodedByteCount === 0) ||
+      ('mozHasAudio' in player && player.mozHasAudio === false);
+    const name = /\.(mkv|mp4|m4v|mov|avi|webm)$/i.test(source.name || '') ? source.name : 'movie.mkv';
+    const out = name.replace(/\.[^.]+$/, '') + '-web.mp4';
+    if (noPicture) {
+      toast(
+        `This file plays without a picture: its video format (probably HEVC/H.265) isn’t supported by this browser. Convert it once with: ffmpeg -i "${name}" -c:v libx264 -crf 20 -c:a aac -b:a 192k "${out}"`,
+        { tone: 'warn', duration: 20000 },
+      );
+    } else if (noSound) {
+      toast(
+        `No sound is coming from this file. If it should have sound, its audio is probably Dolby (AC-3) or DTS, which browsers can’t play. Convert just the audio (fast, picture untouched): ffmpeg -i "${name}" -c:v copy -c:a aac -b:a 192k "${out}"`,
+        { tone: 'warn', duration: 20000 },
+      );
+    }
+  }, 3000);
+}
+player.addEventListener('playing', checkDecodability);
+
+// Links whose host doesn't support range requests can play but not seek: say so up front.
+player.addEventListener('loadedmetadata', () => {
+  const source = session?.sync.source;
+  if (source?.type !== 'url' || !Number.isFinite(player.duration)) return;
+  const seekable = player.seekable.length ? player.seekable.end(player.seekable.length - 1) : 0;
+  if (seekable < player.duration - 5) {
+    toast('This video’s host doesn’t support jumping to a time, so seeking may not work for everyone. Hosts that support “range requests” (most file hosts and CDNs) fix this.', { tone: 'warn', duration: 10000 });
+  }
+});
 
 // A file or link that can't play used to leave a silent black screen.
 player.addEventListener('error', () => {
@@ -786,7 +952,9 @@ function onSyncState({ playback, prev, actor, actorId, action, sourceChanged, op
     } else {
       toast(`${who} started “${playback.source.name}”`);
     }
-  } else if (action === 'PLAY') toast(`▶ ${who} pressed play`);
+  } else if (action === 'OWNER_AWAY') toast(`${who} lost their connection. Waiting up to a minute for them to come back.`, { tone: 'warn', duration: 6000 });
+  else if (action === 'OWNER_BACK') toast(`${who} is back`, { tone: 'success' });
+  else if (action === 'PLAY') toast(`▶ ${who} pressed play`);
   else if (action === 'PAUSE') toast(`❚❚ ${who} paused at ${formatTime(playback.time)}`);
   else if (action === 'SEEK') toast(`⇆ ${who} jumped to ${formatTime(playback.time)}`);
   wake();
@@ -920,8 +1088,18 @@ movieVol.value = String(Math.round(settings.movieVolume * 100));
 voiceVol.value = String(Math.round(settings.voiceVolume * 100));
 ambToggle.checked = settings.ambilight;
 
+// iOS/iPadOS ignore media element volume (it stays at 1; only the hardware buttons change
+// loudness), but `muted` works. Detect it so the sliders still act as mute at zero and say so.
+const volumeLocked = (() => {
+  const probe = document.createElement('video');
+  probe.volume = 0.5;
+  return probe.volume !== 0.5;
+})();
+if (volumeLocked) $('#volume-locked-note').hidden = false;
+
 function applyMovieVolume() {
   player.volume = settings.movieVolume;
+  player.muted = player.dataset.forceMuted === '1' || settings.movieVolume === 0;
   if (yt) yt.volume = settings.movieVolume;
   if (local.own?.monitor) local.own.monitor.volume = settings.movieVolume;
 }
@@ -1007,6 +1185,7 @@ async function updateStats() {
     lines.push(['Mode', sync.source.type === 'url' ? 'Direct link (each viewer streams the source)' : 'Local copy (nothing sent over the network)']);
   }
   const m = media();
+  if (sync.isController && sync.state?.playing) lines.push(['Buffering (30 s)', `${Math.round(sync.bufferingShare * 100)}%`]);
   lines.push(['Drift', sync.isController && m.readyState ? `${((m.currentTime - sync.expectedTime()) * 1000).toFixed(0)} ms` : '—']);
 
   chip.hidden = !label;
@@ -1142,6 +1321,12 @@ document.addEventListener('keydown', (e) => {
   } else if (/^[1-8]$/.test(key)) {
     session.reactions.sendByIndex(Number(key) - 1);
   }
+});
+
+// Closing or reloading the page is deliberate: tell the server so a stream we host ends now
+// instead of after the reconnect grace period.
+window.addEventListener('pagehide', () => {
+  if (socket?.connected && session) socket.emit('room:leave');
 });
 
 window.addEventListener('beforeunload', () => {

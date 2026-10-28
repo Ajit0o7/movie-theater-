@@ -185,7 +185,9 @@ export class CameraDeck {
   setVoiceVolume(volume) {
     this.voiceVolume = volume;
     for (const tile of this.tiles.values()) {
-      if (!tile.isSelf) tile.video.volume = volume;
+      if (tile.isSelf) continue;
+      tile.video.volume = volume;
+      tile.video.muted = volume === 0; // the only control that works on iOS
     }
   }
 
@@ -193,7 +195,10 @@ export class CameraDeck {
     const video = h('video', { autoplay: true, playsinline: true });
     video.muted = isSelf; // never play your own voice back
     if (isSelf) video.classList.add('mirrored');
-    else video.volume = this.voiceVolume;
+    else {
+      video.volume = this.voiceVolume;
+      video.muted = this.voiceVolume === 0;
+    }
 
     const avatar = h('div', { class: 'cam-avatar' });
     const label = h('span', { class: 'cam-name' });

@@ -40,7 +40,21 @@ npm start
 cloudflared tunnel --url http://localhost:3000   # prints an https://….trycloudflare.com link to share
 ```
 
-If a friend's camera connects but no video arrives, one of you is behind a strict NAT. Set up a TURN server (see **Configuration**).
+If a friend's camera connects but no video arrives, one of you is behind a strict network. Set up a TURN relay (next section).
+
+### TURN relay (needed for mobile data and strict Wi-Fi)
+
+Video and voice go directly between browsers. Mobile data (carrier-grade NAT), campus, hotel and office networks often block that, and then only a **TURN relay** can connect people. Without one, the app shows "Couldn't connect to …" for those friends. A free relay takes a few minutes to set up. Pick **one** option and set its environment variables (on Render: *Service → Environment*):
+
+| Option | Variables | Notes |
+| --- | --- | --- |
+| **Cloudflare** (recommended) | `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN` | In the Cloudflare dashboard, open *Realtime → TURN Server*, create a TURN key, and copy its ID and API token. Has a free monthly allowance. |
+| **Metered** or any credentials URL | `TURN_CREDENTIALS_URL` | e.g. `https://<your-app>.metered.live/api/v1/turn/credentials?apiKey=<key>` from the Metered dashboard. Has a free monthly allowance. |
+| **Your own server** (coturn) | `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | Fixed credentials. |
+
+With Cloudflare or a credentials URL, the server fetches **short-lived** credentials (24 h), caches them and refreshes them before they expire, so your API token never reaches the browser. If the provider is down, people on normal networks still connect directly. The startup log shows which relay is active.
+
+> The provider integrations accept every response shape these APIs are known to return, and are covered by tests with simulated responses. They haven't been tested against the live services from the development environment. If the log says `TURN credentials … failed`, check the key and token.
 
 ## Four ways to watch
 
@@ -79,6 +93,26 @@ The host uploads one copy per viewer, so with two friends, Eco needs about 5 Mbp
 2. Press **I**. *Encoder … (software)* together with a heavy preset means the CPU can't keep up: use Eco, or enable hardware acceleration in the browser settings. *Dropped / freezes* rising on a viewer points to their network or decoder.
 3. With 3 or more viewers, stay on Eco, or have everyone use *Video link* or *Same file everywhere*, which send no video from the host.
 
+## Limits, and what the app does about them
+
+Some limits come from browsers or networks and can't be removed by a web app. The app detects each one and tells people what to do, instead of failing silently.
+
+| Situation | Why | What the app does |
+| --- | --- | --- |
+| Friends on mobile data, campus, hotel or office Wi-Fi can't connect | These networks block direct browser-to-browser connections | Uses a TURN relay when one is configured (see **TURN relay**); otherwise explains the cause in the error message. |
+| Streaming a file or screen to many people stutters | Every viewer gets a separate copy from the host's upload and CPU (peer-to-peer mesh) | Each viewer's share shrinks as the room grows (for example, Cinema to 5 people uses about 10 Mbps instead of 25), and so do webcams. The host gets a warning from 3 viewers up. For big groups, *Video link* and *Same file everywhere* send no video from the host. A media server (SFU) would remove the limit, but it's a separate service this app doesn't include. |
+| A file plays silently or without a picture | Browsers can't decode Dolby (AC-3/E-AC-3), DTS and often HEVC | Detects it a few seconds in and shows a one-line `ffmpeg` fix: `ffmpeg -i in.mkv -c:v copy -c:a aac -b:a 192k out.mp4` for the audio, or re-encode with `-c:v libx264` for HEVC. |
+| Safari can't *Stream a file* | WebKit has no `captureStream()` | Says so and suggests *Same file everywhere*, or hosting from Chrome, Edge or Firefox. |
+| No screen sharing on phones | Mobile browsers don't support screen capture | The option is hidden on phones. |
+| Volume sliders do nothing on iPhone/iPad | iOS ignores media volume; only the side buttons change it | The sliders still mute at 0, and the mixer explains this. |
+| The host's Wi-Fi drops or laptop sleeps | The connection breaks | A *Stream a file* or *Share screen* source is kept for 60 seconds. When the same tab reconnects, the stream resumes for everyone. Closing the tab still ends it straight away. |
+| Shared screen or window has no sound | Browsers only share sound from a tab (or the whole screen on Windows) | Explains which to share. |
+| Netflix, Disney+ and similar show black when shared | DRM blocks capture | Noted on the *Share screen* card. |
+| A YouTube video won't embed, or YouTube is blocked | The owner disabled embedding, or an ad blocker blocks `youtube.com` | Specific messages for each; for blocked embeds, suggests sharing a YouTube tab. |
+| A pasted link doesn't play | An `http://` link on an `https://` site, a share page instead of a file, or a host without seeking support | Refuses `http://` on `https://` with the https version suggested, converts Dropbox share links, explains Google Drive/OneDrive/MEGA, and warns when seeking won't work. |
+| A viewer's internet is slower than the video (for example 0.7 Mbps for a 1.1 Mbps file) | It can't download fast enough to play in real time; no sync trick changes that | Detects it after about 20 s of watching (30% or more of the time spent buffering), stops wasting downloaded video on frequent jumps (one catch-up every 20 s instead of every 4 s), and tells that viewer and the rest of the room why. In a test this cut buffering time by about a third. A smaller file, or *Same file everywhere*, is the real fix. |
+| A Bluetooth headset dies mid-call | The mic track ends | Switches to the system's default mic (or turns the mic off) and says so. |
+
 ## Keyboard shortcuts
 
 | Key | Action |
@@ -114,7 +148,7 @@ public/
   js/media.js      Capture constraints (4K display, voice vs. movie audio)
 ```
 
-**Sync model.** The server holds the authoritative playback clock as `{ playing, time, serverTime }`. Clients estimate their offset from server time with ping round-trips, extrapolate the expected position, and steer toward it. They seek on large drift and nudge `playbackRate` ±5% on small drift. UI actions are sent as *intents* (`PLAY`/`PAUSE`/`SEEK`) rather than inferred from `<video>` events, so applying a remote change never echoes back to the server.
+**Sync model.** The server holds the authoritative playback clock as `{ playing, time, serverTime }`. Clients estimate their offset from server time with ping round-trips, extrapolate the expected position, and steer toward it. Under 0.25 s of drift is ignored. Up to 1.5 s is closed by nudging `playbackRate` ±5%. Beyond that, a viewer who is *behind* jumps ahead (aiming past the target by their measured seek delay, never past the end). A viewer who is *ahead* pauses for the gap instead of seeking back, which would discard buffered video. UI actions are sent as *intents* (`PLAY`/`PAUSE`/`SEEK`) rather than inferred from `<video>` events, so applying a remote change never echoes back to the server.
 
 **Media model.** Each pair of participants shares one `RTCPeerConnection` (a full mesh, capped at 8 people). Local media lives in four slots (`camVideo`, `micAudio`, `movieVideo`, `movieAudio`) grouped into a *camera* stream and a *movie* stream. Toggling the camera or changing the movie uses `replaceTrack()` and doesn't renegotiate. Each client announces its stream IDs over Socket.io, so receivers know which incoming stream is a webcam and which is the movie.
 
@@ -124,12 +158,15 @@ public/
 | --- | --- | --- |
 | `PORT` or `--port` | `3000` | HTTP port. Portable form: `npm start -- --port 3001`. In PowerShell: `$env:PORT=3001; npm start` |
 | `STUN_URLS` | Google STUN | Comma-separated STUN URLs |
-| `TURN_URLS` | — | Comma-separated TURN URLs (needed behind strict NATs/firewalls) |
-| `TURN_USERNAME` / `TURN_CREDENTIAL` | — | TURN credentials |
+| `CLOUDFLARE_TURN_KEY_ID` / `CLOUDFLARE_TURN_API_TOKEN` | — | TURN relay through Cloudflare, with short-lived credentials (see **TURN relay**) |
+| `TURN_CREDENTIALS_URL` | — | URL returning ICE servers as JSON (e.g. Metered) |
+| `TURN_URLS` | — | Comma-separated fixed TURN URLs (e.g. your own coturn) |
+| `TURN_USERNAME` / `TURN_CREDENTIAL` | — | Credentials for `TURN_URLS` |
+| `HOST` | `0.0.0.0` | Interface to listen on |
 
 ## Deploying
 
-Any Node 18+ host with WebSocket support works (Render, Fly.io, Railway, a VPS behind Caddy or nginx). Serve it over HTTPS. For friends on mobile networks or corporate Wi-Fi, also run a TURN server (for example coturn) and set the `TURN_*` variables, otherwise some peers won't be able to connect.
+Any Node 18+ host with WebSocket support works (Render, Fly.io, Railway, a VPS behind Caddy or nginx). Serve it over HTTPS. For friends on mobile networks or corporate Wi-Fi, configure a TURN relay (see **TURN relay**), otherwise some people won't be able to connect.
 
 **Bandwidth:** "Stream a file" and "Share screen" send one copy per viewer from the host, so 3 viewers on Eco (2.5 Mbps) need about 7.5 Mbps of upload, or 30 Mbps on Max. The browser's congestion control backs off automatically when the link can't keep up.
 

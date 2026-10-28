@@ -15,6 +15,13 @@ const COARSE_SEEK_THRESHOLD = 0.8; // players without fine playbackRate (YouTube
 const HARD_SEEK_COOLDOWN_MS = 4000;
 const MAX_SEEK_LEAD = 6; // seconds
 const END_MARGIN = 0.25; // seconds kept clear of the end by catch-up seeks
+const MAX_HOLD_S = 10; // longest pause used to let the room catch up with a viewer who is ahead
+// A viewer whose connection is slower than the video spends much of the time buffering.
+// Jumping ahead can't fix that (it discards what was downloaded), so once detected, catch-up
+// jumps are spaced out to give stretches of continuous watching, and people are told why.
+const HEALTH_WINDOW_S = 30;
+const STARVED_FRACTION = 0.3;
+const STARVED_COOLDOWN_MS = 20000;
 
 export class ClockSync {
   constructor(socket) {
@@ -56,6 +63,8 @@ export class CinemaSync extends EventTarget {
     this.seekLead = 0;
     // performance.now() starts near 0 at page load, so 0 would count as "a seek just happened".
     this.lastHardSeek = -Infinity;
+    this.holdTimer = null;
+    this.health = { samples: [], starving: false, reported: false };
     this.driftTimer = setInterval(() => this.#correctDrift(), 1000);
 
     this.onState = ({ playback, actor, actorId, action }) => {
@@ -63,9 +72,12 @@ export class CinemaSync extends EventTarget {
       this.state = playback;
       const sourceChanged = !prev || !sameSource(prev.source, playback.source);
       if (sourceChanged) {
-        // Seek latency belongs to one source (a different host or file behaves differently).
+        // Seek latency and buffering health belong to one source.
         this.seekLead = 0;
         this.lastHardSeek = -Infinity;
+        this.health = { samples: [], starving: false, reported: false };
+        clearTimeout(this.holdTimer);
+        this.holdTimer = null;
       }
       this.dispatchEvent(new CustomEvent('state', { detail: { playback, prev, actor, actorId, action, sourceChanged } }));
       this.apply();
@@ -169,6 +181,9 @@ export class CinemaSync extends EventTarget {
   apply() {
     const s = this.state;
     if (!s || !this.isController || !this.#hasMedia()) return;
+    // A real play/pause/seek from anyone overrides a hold.
+    clearTimeout(this.holdTimer);
+    this.holdTimer = null;
     const target = this.expectedTime();
     // Seeking a YouTube embed re-buffers, so tolerate a little more before jumping.
     const tolerance = this.video.supportsRateNudge === false ? 0.5 : SOFT_DRIFT_THRESHOLD;
@@ -198,6 +213,7 @@ export class CinemaSync extends EventTarget {
 
   destroy() {
     clearInterval(this.driftTimer);
+    clearTimeout(this.holdTimer);
     clearInterval(this.heartbeatTimer);
     this.socket.off('sync:state', this.onState);
     this.video?.removeEventListener('loadedmetadata', this.onMeta);
@@ -226,16 +242,42 @@ export class CinemaSync extends EventTarget {
     this.dispatchEvent(new CustomEvent('blocked', { detail: { blocked: value } }));
   }
 
+  /** Share of the last HEALTH_WINDOW_S seconds spent buffering while the room was playing. */
+  get bufferingShare() {
+    const { samples } = this.health;
+    return samples.length ? samples.filter(Boolean).length / samples.length : 0;
+  }
+
+  #sampleHealth() {
+    const stalled = this.video.readyState < 3 || this.video.seeking;
+    const h = this.health;
+    h.samples.push(stalled);
+    if (h.samples.length > HEALTH_WINDOW_S) h.samples.shift();
+    const starving = h.samples.length >= 20 && this.bufferingShare >= STARVED_FRACTION;
+    if (starving && !h.reported) {
+      h.reported = true; // once per source
+      this.dispatchEvent(new CustomEvent('struggling', { detail: { share: this.bufferingShare } }));
+    }
+    h.starving = starving;
+  }
+
   #correctDrift() {
     const s = this.state;
     if (!s || !this.isController || !this.#hasMedia() || !s.playing) return;
     // The stream owner is the clock for 'stream' sources; they never chase themselves.
     if (s.source.type === 'stream') return;
+    if (this.holdTimer) return; // waiting for the room to catch up with us
+    if (!this.video.paused) this.#sampleHealth();
     if (this.video.paused || this.video.seeking || this.video.readyState < 3) return;
     const drift = this.video.currentTime - this.expectedTime();
     const abs = Math.abs(drift);
-    // YouTube only supports coarse rates, so it can't be nudged; it just seeks on big drift.
-    if (abs > HARD_SEEK_THRESHOLD || (this.video.supportsRateNudge === false && abs > COARSE_SEEK_THRESHOLD)) {
+    const limit = this.video.supportsRateNudge === false ? COARSE_SEEK_THRESHOLD : HARD_SEEK_THRESHOLD;
+    if (drift > limit) {
+      // Ahead of the room (e.g. a catch-up overshot). Seeking back would throw away buffered
+      // video; pausing for the gap keeps it and lets more download meanwhile.
+      this.#hold(Math.min(drift, MAX_HOLD_S));
+    } else if (abs > limit) {
+      // YouTube only supports coarse rates, so it can't be nudged; it jumps on smaller drift.
       this.#catchUpSeek();
     } else if (abs > SOFT_DRIFT_THRESHOLD && this.video.supportsRateNudge !== false) {
       this.video.playbackRate = drift > 0 ? 1 - NUDGE : 1 + NUDGE;
@@ -244,9 +286,20 @@ export class CinemaSync extends EventTarget {
     }
   }
 
+  #hold(seconds) {
+    const video = this.video;
+    video.playbackRate = 1;
+    video.pause();
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null;
+      if (this.video === video && this.state?.playing && video.paused) video.play().catch(() => {});
+    }, seconds * 1000);
+  }
+
   #catchUpSeek() {
     const started = performance.now();
-    if (started - this.lastHardSeek < HARD_SEEK_COOLDOWN_MS) return;
+    const cooldown = this.health.starving ? STARVED_COOLDOWN_MS : HARD_SEEK_COOLDOWN_MS;
+    if (started - this.lastHardSeek < cooldown) return;
     this.lastHardSeek = started;
     const video = this.video;
     video.playbackRate = 1;
@@ -294,6 +347,7 @@ export class CinemaSync extends EventTarget {
 }
 
 function sameSource(a, b) {
-  // Ids are unique per start, so re-sharing the same screen or file counts as a change.
-  return a.id === b.id && a.type === b.type;
+  // Ids are unique per start, so re-sharing the same screen or file counts as a change. A
+  // host dropping out and coming back (new connection id) also needs a re-render.
+  return a.id === b.id && a.type === b.type && a.ownerId === b.ownerId && Boolean(a.ownerAway) === Boolean(b.ownerAway);
 }

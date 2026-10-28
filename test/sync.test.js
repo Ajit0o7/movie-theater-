@@ -44,3 +44,61 @@ test('catch-up seek latency is forgotten when the source changes', () => {
     sync.destroy();
   }
 });
+
+test('a viewer who is ahead waits for the room instead of seeking back (keeps the buffer)', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  const video = fakeVideo();
+  const calls = [];
+  video.pause = () => { calls.push('pause'); video.paused = true; };
+  video.play = async () => { calls.push('play'); video.paused = false; };
+  const sync = new CinemaSync({ socket: fakeSocket(), clock, video, selfId: 'me' });
+  try {
+    sync.setInitialState(state(urlSource('a'), 50));
+    video.currentTime = 54; // 4s ahead, e.g. after a catch-up overshoot
+    t.mock.timers.tick(1000);
+    assert.equal(video.currentTime, 54, 'no backwards seek');
+    assert.deepEqual(calls.slice(-1), ['pause']);
+    t.mock.timers.tick(4100);
+    await Promise.resolve();
+    assert.deepEqual(calls.slice(-1), ['play'], 'resumes once the room has caught up');
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('a connection slower than the video is detected once, and catch-up jumps are spaced out', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  const video = fakeVideo({ readyState: 2 }); // stuck buffering
+  const sync = new CinemaSync({ socket: fakeSocket(), clock, video, selfId: 'me' });
+  let reported = 0;
+  sync.addEventListener('struggling', () => reported++);
+  try {
+    sync.setInitialState(state(urlSource('a'), 10));
+    t.mock.timers.tick(19_000);
+    assert.equal(reported, 0, 'not judged on too little data');
+    t.mock.timers.tick(5_000);
+    assert.equal(reported, 1);
+    assert.ok(sync.bufferingShare > 0.9);
+    t.mock.timers.tick(60_000);
+    assert.equal(reported, 1, 'reported once per source');
+  } finally {
+    sync.destroy();
+  }
+});
+
+test('a healthy viewer is never reported as struggling', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  const video = fakeVideo();
+  const sync = new CinemaSync({ socket: fakeSocket(), clock, video, selfId: 'me' });
+  let reported = 0;
+  sync.addEventListener('struggling', () => reported++);
+  try {
+    sync.setInitialState(state(urlSource('a'), 10));
+    video.currentTime = 10;
+    t.mock.timers.tick(60_000);
+    assert.equal(reported, 0);
+    assert.equal(sync.bufferingShare, 0);
+  } finally {
+    sync.destroy();
+  }
+});
