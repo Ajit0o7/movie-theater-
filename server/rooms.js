@@ -149,16 +149,46 @@ export function addParticipant(room, id, name, now = Date.now(), clientId = null
 }
 
 /** Removes a participant. If they owned the current stream/screen source, the source is cleared. */
-export function removeParticipant(room, id, now = Date.now()) {
+/**
+ * Removes a participant. A stream/screen source they owned is cleared, unless `grace` is set
+ * and the tab can be recognised again (it has a client id): then the source is kept and
+ * marked `ownerAway`, so a host whose Wi-Fi blinks or laptop sleeps can come back and carry
+ * on instead of the movie stopping for everyone. See reclaimSource / expireAwaySource.
+ */
+export function removeParticipant(room, id, now = Date.now(), { grace = false } = {}) {
   const participant = room.participants.get(id);
   room.participants.delete(id);
   let sourceCleared = false;
+  let sourceAway = false;
   const { source } = room.playback;
   if (source.ownerId === id && (source.type === 'stream' || source.type === 'screen')) {
-    room.playback = { ...room.playback, source: emptySource(), playing: false, time: 0, updatedAt: now };
-    sourceCleared = true;
+    if (grace && room.sourceOwnerClientId && room.sourceOwnerClientId === participant?.clientId) {
+      room.playback = { ...room.playback, source: { ...source, ownerAway: true } };
+      sourceAway = true;
+    } else {
+      room.playback = { ...room.playback, source: emptySource(), playing: false, time: 0, updatedAt: now };
+      room.sourceOwnerClientId = null;
+      sourceCleared = true;
+    }
   }
-  return { participant, sourceCleared };
+  return { participant, sourceCleared, sourceAway };
+}
+
+/** The away host's tab is back (same client id): hand the source to its new connection. */
+export function reclaimSource(room, clientId, newId) {
+  const { source } = room.playback;
+  if (!source.ownerAway || !isValidClientId(clientId) || room.sourceOwnerClientId !== clientId) return false;
+  const { ownerAway, ...rest } = source;
+  room.playback = { ...room.playback, source: { ...rest, ownerId: newId } };
+  return true;
+}
+
+/** Grace period over and the host never came back: stop the source. */
+export function expireAwaySource(room, now = Date.now()) {
+  if (!room.playback.source.ownerAway) return false;
+  room.playback = { ...room.playback, source: emptySource(), playing: false, time: 0, updatedAt: now };
+  room.sourceOwnerClientId = null;
+  return true;
 }
 
 export function publicParticipant(p) {
@@ -216,7 +246,13 @@ export function setSource(room, actorId, input, now = Date.now()) {
       duration: validDuration(input.duration),
     };
   }
-  if (type !== 'none') source.id = sourceId(input.id);
+  if (type !== 'none') {
+    source.id = sourceId(input.id);
+    // The owner's name lets guests see who they are waiting for if the owner drops.
+    source.ownerName = room.participants.get(actorId)?.name ?? null;
+  }
+  // Private (never sent to clients): recognises the owner's tab if it reconnects.
+  room.sourceOwnerClientId = type === 'none' ? null : room.participants.get(actorId)?.clientId ?? null;
   room.playback = {
     source,
     playing: false,

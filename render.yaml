@@ -9,3 +9,11 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20
+      # TURN relay, so friends on mobile data or strict Wi-Fi can connect (README → "TURN relay").
+      # Set ONE option in the Render dashboard; values are secrets and are not stored here.
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false
+      - key: TURN_CREDENTIALS_URL
+        sync: false

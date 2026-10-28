@@ -40,3 +40,26 @@ test('cinema presets hold resolution and cap at 30fps; audio is 160 kbps', async
   assert.equal(MOVIE_AUDIO_BITRATE, 160_000);
   assert.equal(MOVIE_JITTER_BUFFER_MS, 800);
 });
+
+test('mesh budget: full quality for 1–2 viewers, shared upload and lower resolution beyond', async () => {
+  const { meshBudget } = await import('../public/js/rtc.js');
+  const cinema = STREAM_PRESETS.cinema; // 1440p, 5 Mbps
+  assert.deepEqual(
+    [1, 2].map((n) => meshBudget(cinema, n).movieBitrate),
+    [5_000_000, 5_000_000],
+  );
+  const five = meshBudget(cinema, 5);
+  assert.equal(five.movieBitrate, 2_000_000, 'two full copies shared by five');
+  assert.equal(five.movieHeight, 1080);
+  assert.ok(five.movieBitrate * 5 <= cinema.bitrate * 2 + 1, 'total stays near two full copies');
+  assert.equal(meshBudget(STREAM_PRESETS.eco, 7).movieBitrate, 1_200_000, 'never below a watchable floor');
+  assert.equal(meshBudget(STREAM_PRESETS.max, 7).movieHeight, 720);
+  assert.equal(meshBudget(STREAM_PRESETS.eco, 1).movieHeight, 1080, 'never above the preset');
+
+  assert.equal(meshBudget(cinema, 1).cameraBitrate, 1_200_000);
+  assert.equal(meshBudget(cinema, 7).cameraBitrate, Math.round(2_400_000 / 7));
+  assert.equal(meshBudget(cinema, 7).cameraHeight, 360);
+  // The example from the report: Cinema to 5 viewers plus webcams was ~31 Mbps of upload.
+  const total = (five.movieBitrate + five.cameraBitrate) * 5;
+  assert.ok(total <= 13_000_000, `now about ${(total / 1e6).toFixed(1)} Mbps`);
+});

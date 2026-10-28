@@ -195,7 +195,7 @@
         </section>
         <section class="source-card" id="screen-card">
           <h3><svg class="icon"><use href="#i-screen"/></svg>Share screen or tab</h3>
-          <p>Capture a tab or screen at the quality chosen below, with stereo tab audio. Tick <em>Share tab audio</em> in the browser prompt.</p>
+          <p>Capture a tab or screen at the quality chosen below, with stereo tab audio. Tick <em>Share tab audio</em> in the browser prompt. Netflix, Disney+ and other DRM-protected sites show up black.</p>
           <button class="btn btn-ghost" data-action="share-screen" id="share-screen-btn">Share…</button>
           <p class="hint" id="screen-insecure" hidden>Needs an <code>https://</code> address (or localhost). Ask the host to run <code>npm run start:https</code>.</p>
         </section>
@@ -227,6 +227,7 @@
         <input type="range" id="voice-vol" min="0" max="100" value="100">
       </label>
       <label class="toggle"><input type="checkbox" id="ambilight-toggle" checked><span>Ambilight glow</span></label>
+      <p class="hint" id="volume-locked-note" hidden>On iPhone and iPad, the side buttons set the loudness; these sliders can only mute (drag to 0).</p>
       <p class="hint">Movie audio is sent as clean stereo with echo cancellation and noise suppression turned off. Voice chat has those filters on.</p>
     </div>
   </dialog>

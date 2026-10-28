@@ -69,6 +69,34 @@ function mayScale(mime, mode) {
   return listed.length === 0 || listed.includes(mode);
 }
 
+/**
+ * Upload budget for a mesh. The host sends a separate encoded copy of the movie (and of their
+ * webcam) to every viewer, and each copy competes for the same uplink and CPU. Giving every
+ * viewer the full preset made big rooms freeze. Per-viewer bitrate and resolution shrink
+ * as the room grows, so the total stays near what a home connection and CPU can sustain:
+ *
+ *   movie   1–2 viewers: full preset; then the bitrate of two full copies is shared (never below
+ *           1.2 Mbps each), and resolution is capped at 1440p (3), 1080p (4–5), 720p (6+)
+ *   camera  ~2.4 Mbps shared across viewers (250 kbps–1.2 Mbps each), 720p → 480p → 360p
+ */
+export function meshBudget(preset, viewers) {
+  const n = Math.max(1, viewers || 1);
+  const movieBitrate = n <= 2 ? preset.bitrate : Math.round(Math.max(1_200_000, Math.min(preset.bitrate, (preset.bitrate * 2) / n)));
+  const movieHeightCap = n <= 2 ? preset.height : n === 3 ? 1440 : n <= 5 ? 1080 : 720;
+  return {
+    movieBitrate,
+    movieHeight: Math.min(preset.height, movieHeightCap),
+    cameraBitrate: Math.round(Math.min(CAMERA_VIDEO_BITRATE, Math.max(250_000, 2_400_000 / n))),
+    cameraHeight: n <= 2 ? 720 : n <= 4 ? 480 : 360,
+  };
+}
+
+/** Scale factor that brings a track down to `maxHeight` (never up). */
+function downscale(track, maxHeight) {
+  const height = track.getSettings?.().height;
+  return height && height > maxHeight ? height / maxHeight : 1;
+}
+
 // getParameters()/setParameters() is a transaction: two overlapping calls on one sender make
 // the second fail. Calls are queued per sender so they never overlap.
 const senderQueues = new WeakMap();
@@ -78,15 +106,16 @@ const senderQueues = new WeakMap();
  * call repeatedly. Newer fields (codec, scalabilityMode) are tried first and dropped one
  * layer at a time if the browser rejects them, so the essentials always land.
  */
-export function applySenderParams(sender, slot, preset = STREAM_PRESETS[DEFAULT_PRESET], codecOrder = SAFE_DEFAULT_ORDER) {
+export function applySenderParams(sender, slot, preset = STREAM_PRESETS[DEFAULT_PRESET], codecOrder = SAFE_DEFAULT_ORDER, viewers = 1) {
   if (!sender) return Promise.resolve();
-  const next = (senderQueues.get(sender) ?? Promise.resolve()).then(() => setSenderParams(sender, slot, preset, codecOrder));
+  const next = (senderQueues.get(sender) ?? Promise.resolve()).then(() => setSenderParams(sender, slot, preset, codecOrder, viewers));
   senderQueues.set(sender, next);
   return next;
 }
 
-async function setSenderParams(sender, slot, preset, codecOrder) {
+async function setSenderParams(sender, slot, preset, codecOrder, viewers) {
   if (!sender.track) return;
+  const budget = meshBudget(preset, viewers);
   const variants = slot === 'movieVideo' ? ['full', 'codec', 'no-codec', 'minimal'] : ['full', 'minimal'];
   let lastErr;
   for (const variant of variants) {
@@ -95,11 +124,10 @@ async function setSenderParams(sender, slot, preset, codecOrder) {
       if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
       const enc = params.encodings[0];
       if (slot === 'movieVideo') {
-        enc.maxBitrate = preset.bitrate;
+        enc.maxBitrate = budget.movieBitrate;
         if (variant !== 'minimal') {
-          // A captured 4K file is scaled down to the preset; screen capture is already sized.
-          const height = sender.track.getSettings?.().height;
-          enc.scaleResolutionDownBy = height && height > preset.height ? height / preset.height : 1;
+          // Scaled to the preset (a captured 4K file) and further down in big rooms.
+          enc.scaleResolutionDownBy = downscale(sender.track, budget.movieHeight);
           enc.maxFramerate = preset.fps;
           enc.priority = 'high';
           enc.networkPriority = 'high';
@@ -125,8 +153,11 @@ async function setSenderParams(sender, slot, preset, codecOrder) {
           enc.networkPriority = 'high';
         }
       } else if (slot === 'camVideo') {
-        enc.maxBitrate = CAMERA_VIDEO_BITRATE;
-        if (variant !== 'minimal') enc.priority = 'low';
+        enc.maxBitrate = budget.cameraBitrate;
+        if (variant !== 'minimal') {
+          enc.priority = 'low';
+          enc.scaleResolutionDownBy = downscale(sender.track, budget.cameraHeight);
+        }
       } else if (slot === 'micAudio') {
         enc.maxBitrate = VOICE_AUDIO_BITRATE;
         if (variant !== 'minimal') enc.priority = 'high';
@@ -233,6 +264,7 @@ export class PeerManager extends EventTarget {
     for (const slot of Object.keys(SLOTS)) {
       if (this.tracks[slot]) this.#attach(peer, slot, this.tracks[slot]);
     }
+    this.#rebudget(peer);
     return peer;
   }
 
@@ -241,6 +273,7 @@ export class PeerManager extends EventTarget {
     if (!peer) return;
     peer.pc.close();
     this.peers.delete(peerId);
+    this.#rebudget();
   }
 
   /** Puts `track` (or null to clear) into a slot on every connection. */
@@ -256,7 +289,7 @@ export class PeerManager extends EventTarget {
         const sender = peer.senders[slot];
         if (sender) {
           await sender.replaceTrack(track).catch((err) => console.warn('[rtc] replaceTrack failed', err));
-          if (track) await applySenderParams(sender, slot, this.moviePreset, this.codecOrder);
+          if (track) await applySenderParams(sender, slot, this.moviePreset, this.codecOrder, this.peers.size);
         } else if (track) {
           this.#attach(peer, slot, track);
         }
@@ -281,7 +314,7 @@ export class PeerManager extends EventTarget {
   }
 
   #applyMovieParams() {
-    for (const peer of this.peers.values()) applySenderParams(peer.senders.movieVideo, 'movieVideo', this.moviePreset, this.codecOrder);
+    for (const peer of this.peers.values()) applySenderParams(peer.senders.movieVideo, 'movieVideo', this.moviePreset, this.codecOrder, this.peers.size);
   }
 
   /** Adds a playout buffer to the receivers carrying `tracks` from `peerId` (movie only). */
@@ -336,11 +369,27 @@ export class PeerManager extends EventTarget {
     if (slot === 'movieVideo') {
       preferMovieCodecs(peer.pc.getTransceivers().find((t) => t.sender === sender), this.codecOrder);
     }
-    applySenderParams(sender, slot, this.moviePreset, this.codecOrder);
+    applySenderParams(sender, slot, this.moviePreset, this.codecOrder, this.peers.size);
+  }
+
+  /** The room size changed: every other connection's share of the upload changes too. */
+  #rebudget(except = null) {
+    for (const peer of this.peers.values()) if (peer !== except) this.#applyAllParams(peer);
+  }
+
+  /** Total upload the movie and webcam will use across all viewers (for the host's warning). */
+  uploadEstimate() {
+    const budget = meshBudget(this.moviePreset, this.peers.size);
+    const n = this.peers.size;
+    return {
+      viewers: n,
+      movie: this.tracks.movieVideo ? budget.movieBitrate * n : 0,
+      camera: this.tracks.camVideo ? budget.cameraBitrate * n : 0,
+    };
   }
 
   #applyAllParams(peer) {
-    for (const [slot, sender] of Object.entries(peer.senders)) applySenderParams(sender, slot, this.moviePreset, this.codecOrder);
+    for (const [slot, sender] of Object.entries(peer.senders)) applySenderParams(sender, slot, this.moviePreset, this.codecOrder, this.peers.size);
   }
 
   #send(to, data) {

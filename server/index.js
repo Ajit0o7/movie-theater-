@@ -15,12 +15,14 @@ import {
   applyHeartbeat,
   applySyncEvent,
   createRoom,
+  expireAwaySource,
   findByClientId,
   generateRoomId,
   isValidReaction,
   isValidRoomId,
   listParticipants,
   publicParticipant,
+  reclaimSource,
   removeParticipant,
   setCamLayout,
   setMedia,
@@ -28,22 +30,16 @@ import {
   setSource,
   snapshotPlayback,
 } from './rooms.js';
+import { createIceProvider } from './ice.js';
 import { lanAddresses, loadOrCreateCert } from './tls.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const EMPTY_ROOM_TTL_MS = 5 * 60 * 1000;
-
-export function iceServersFromEnv(env = process.env) {
-  const servers = [{ urls: (env.STUN_URLS || 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302').split(',') }];
-  if (env.TURN_URLS) {
-    servers.push({ urls: env.TURN_URLS.split(','), username: env.TURN_USERNAME, credential: env.TURN_CREDENTIAL });
-  }
-  return servers;
-}
+export const HOST_GRACE_MS = 60 * 1000;
 
 /** `tls` ({ cert, key }) serves over HTTPS, which browsers require for camera/mic/screen on a LAN IP. */
-export function createCinemaServer({ env = process.env, tls = null } = {}) {
+export function createCinemaServer({ env = process.env, tls = null, ice = createIceProvider(env), hostGraceMs = HOST_GRACE_MS } = {}) {
   const app = express();
   const httpServer = tls ? createHttpsServer(tls, app) : createServer(app);
   const io = new Server(httpServer, { maxHttpBufferSize: 1e6 });
@@ -54,8 +50,9 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
   app.use(express.json({ limit: '10kb' }));
   app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
-  app.get('/api/config', (_req, res) => {
-    res.json({ iceServers: iceServersFromEnv(env) });
+  app.get('/api/config', async (_req, res) => {
+    res.set('Cache-Control', 'no-store'); // TURN credentials are short-lived
+    res.json({ iceServers: await ice.iceServers(), relay: ice.source !== 'none' });
   });
 
   app.post('/api/rooms', (_req, res) => {
@@ -92,17 +89,45 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
     cleanupTimers.set(room.id, timer);
   }
 
-  /** Removes a participant whose connection was superseded, and tells everyone. */
+  const graceTimers = new Map(); // roomId -> timer while a stream/screen host is away
+
+  /**
+   * Removes a participant and tells the room. With `grace`, a stream/screen they were hosting
+   * is kept for HOST_GRACE_MS in case the same tab reconnects (Wi-Fi blip, laptop sleep).
+   */
+  function leave(target, id, { grace }) {
+    if (!target.participants.has(id)) return;
+    const { participant, sourceCleared, sourceAway } = removeParticipant(target, id, Date.now(), { grace });
+    const announceLeft = () => io.to(target.id).except(id).emit('peer:left', { id, name: participant?.name });
+    if (!sourceAway) announceLeft();
+    if (sourceCleared) {
+      clearTimeout(graceTimers.get(target.id));
+      io.to(target.id).emit('sync:state', { playback: snapshotPlayback(target.playback), actor: participant?.name, action: 'SOURCE' });
+    }
+    if (sourceAway) {
+      // "Waiting for the host" first, so clients can tell this apart from a plain leave.
+      io.to(target.id).except(id).emit('sync:state', { playback: snapshotPlayback(target.playback), actor: participant?.name, action: 'OWNER_AWAY' });
+      announceLeft();
+      clearTimeout(graceTimers.get(target.id));
+      const timer = setTimeout(() => {
+        graceTimers.delete(target.id);
+        if (expireAwaySource(target)) {
+          io.to(target.id).emit('sync:state', { playback: snapshotPlayback(target.playback), actor: participant?.name, action: 'SOURCE' });
+        }
+      }, hostGraceMs);
+      timer.unref?.();
+      graceTimers.set(target.id, timer);
+    }
+    scheduleCleanup(target);
+  }
+
+  /** Removes a participant whose connection was superseded by the same tab reconnecting. */
   function evict(target, oldId) {
     const old = io.sockets.sockets.get(oldId);
+    leave(target, oldId, { grace: true }); // the new connection reclaims any stream right after
     if (old) {
       old.emit('session:replaced');
-      old.disconnect(true); // its own disconnect handler removes it and notifies the room
-    }
-    if (target.participants.has(oldId)) {
-      const { participant, sourceCleared } = removeParticipant(target, oldId);
-      io.to(target.id).emit('peer:left', { id: oldId, name: participant?.name });
-      if (sourceCleared) io.to(target.id).emit('sync:state', { playback: snapshotPlayback(target.playback), actor: participant?.name, action: 'SOURCE' });
+      old.disconnect(true);
     }
   }
 
@@ -140,6 +165,13 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
         const participant = addParticipant(target, socket.id, name, Date.now(), clientId);
         room = target;
         socket.join(room.id);
+        if (reclaimSource(room, clientId, socket.id)) {
+          // The host is back within the grace period: their stream carries on. Sent before
+          // peer:joined so clients show "is back" rather than a plain "joined".
+          clearTimeout(graceTimers.get(room.id));
+          graceTimers.delete(room.id);
+          socket.to(room.id).emit('sync:state', { playback: snapshotPlayback(room.playback), actor: participant.name, action: 'OWNER_BACK' });
+        }
         socket.to(room.id).emit('peer:joined', publicParticipant(participant));
         ack({
           self: publicParticipant(participant),
@@ -224,18 +256,22 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
       io.to(room.id).emit('reaction', { emoji, from: socket.id, name: self()?.name });
     });
 
+    // Closing the tab or navigating away is deliberate: end any stream right away.
+    on('room:leave', () => {
+      if (!room) return;
+      leave(room, socket.id, { grace: false });
+      socket.leave(room.id);
+      room = null;
+    });
+
+    // A dropped connection may come back (Wi-Fi blip, sleep): give a host time to return.
     socket.on('disconnect', () => {
       if (!room) return;
-      const { participant, sourceCleared } = removeParticipant(room, socket.id);
-      socket.to(room.id).emit('peer:left', { id: socket.id, name: participant?.name });
-      if (sourceCleared) {
-        io.to(room.id).emit('sync:state', { playback: snapshotPlayback(room.playback), actor: participant?.name, action: 'SOURCE' });
-      }
-      scheduleCleanup(room);
+      leave(room, socket.id, { grace: true });
     });
   });
 
-  return { app, httpServer, io, rooms };
+  return { app, httpServer, io, rooms, ice };
 }
 
 /**
@@ -261,7 +297,7 @@ async function main() {
   const port = Number(portFlag > -1 ? process.argv[portFlag + 1] : process.env.PORT) || 3000;
   const https = process.argv.includes('--https') || process.env.HTTPS === '1';
   const tls = https ? await loadOrCreateCert(path.join(__dirname, '..', '.cert')) : null;
-  const { httpServer } = createCinemaServer({ tls });
+  const { httpServer, ice } = createCinemaServer({ tls });
   httpServer.on('error', (err) => {
     if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use. Close the other server, or use another port: npm start -- --port 3001`);
     else console.error(err);
@@ -273,6 +309,11 @@ async function main() {
   httpServer.listen(port, host, () => {
     const scheme = https ? 'https' : 'http';
     console.log(`🎬 4K Virtual Cinema running at ${scheme}://localhost:${port}`);
+    console.log(
+      ice.source === 'none'
+        ? '   No TURN relay configured: friends on mobile data or strict Wi-Fi may not connect (see README → TURN).'
+        : `   TURN relay: ${{ cloudflare: 'Cloudflare (short-lived credentials)', url: 'TURN_CREDENTIALS_URL', static: 'TURN_URLS' }[ice.source]}`,
+    );
     const lan = lanAddresses();
     if (https) {
       for (const ip of lan) console.log(`   Same Wi-Fi: ${scheme}://${ip}:${port}`);

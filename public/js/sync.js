@@ -294,6 +294,7 @@ export class CinemaSync extends EventTarget {
 }
 
 function sameSource(a, b) {
-  // Ids are unique per start, so re-sharing the same screen or file counts as a change.
-  return a.id === b.id && a.type === b.type;
+  // Ids are unique per start, so re-sharing the same screen or file counts as a change. A
+  // host dropping out and coming back (new connection id) also needs a re-render.
+  return a.id === b.id && a.type === b.type && a.ownerId === b.ownerId && Boolean(a.ownerAway) === Boolean(b.ownerAway);
 }

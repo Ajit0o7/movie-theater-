@@ -8,7 +8,7 @@ let baseUrl;
 const clients = [];
 
 before(async () => {
-  server = createCinemaServer({ env: {} });
+  server = createCinemaServer({ env: {}, hostGraceMs: 300 });
   await new Promise((resolve) => server.httpServer.listen(0, resolve));
   baseUrl = `http://localhost:${server.httpServer.address().port}`;
 });
@@ -152,7 +152,9 @@ test('a reconnect from the same tab replaces its old connection instead of leavi
   await replaced;
   assert.equal((await left).id, oldId);
   assert.deepEqual(join.peers.map((p) => p.name), ['Friend'], 'no ghost copy of Ajit');
-  assert.equal(join.playback.source.type, 'none', "the ghost's screen share was cleared");
+  assert.equal(join.playback.source.type, 'screen', 'the reconnected tab gets its screen share back');
+  assert.equal(join.playback.source.ownerId, newConn.id);
+  assert.equal(join.playback.source.ownerAway, undefined);
   assert.equal(join.self.clientId, undefined, 'client ids stay private');
 });
 
@@ -218,4 +220,51 @@ test('the server listens on all IPv4 interfaces by default (needed on Render/Doc
   const src = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
   assert.match(src, /process\.env\.HOST \|\| '0\.0\.0\.0'/);
   assert.match(src, /httpServer\.listen\(port, host,/);
+});
+
+test('a host whose connection drops keeps the stream for a grace period and gets it back', async () => {
+  const guest = await client();
+  await emit(guest, 'room:join', { roomId: 'grace', name: 'Guest' });
+  const host = await client();
+  await emit(host, 'room:join', { roomId: 'grace', name: 'Host', clientId: 'host-tab-1' });
+  const started = await emit(host, 'sync:source', { type: 'stream', name: 'movie.mkv' });
+  assert.equal(started.playback.source.ownerName, 'Host');
+  assert.equal(JSON.stringify(started).includes('host-tab-1'), false, 'client ids never reach other clients');
+
+  const away = new Promise((resolve) => guest.on('sync:state', (s) => s.action === 'OWNER_AWAY' && resolve(s)));
+  host.disconnect(); // e.g. Wi-Fi drops
+  const awayState = await away;
+  assert.equal(awayState.playback.source.type, 'stream', 'not cleared');
+  assert.equal(awayState.playback.source.ownerAway, true);
+
+  const back = new Promise((resolve) => guest.on('sync:state', (s) => s.action === 'OWNER_BACK' && resolve(s)));
+  const again = await client();
+  const join = await emit(again, 'room:join', { roomId: 'grace', name: 'Host', clientId: 'host-tab-1' });
+  assert.equal(join.playback.source.ownerId, again.id);
+  assert.equal(join.playback.source.id, started.playback.source.id, 'same source continues');
+  assert.equal((await back).playback.source.ownerId, again.id);
+
+  await new Promise((r) => setTimeout(r, 450)); // past the grace period: nothing expires now
+  const late = await client();
+  assert.equal((await emit(late, 'room:join', { roomId: 'grace', name: 'Late' })).playback.source.type, 'stream');
+});
+
+test('the stream ends if the host does not return in time, or leaves on purpose', async () => {
+  const guest = await client();
+  await emit(guest, 'room:join', { roomId: 'grace2', name: 'Guest' });
+  const host = await client();
+  await emit(host, 'room:join', { roomId: 'grace2', name: 'Host', clientId: 'host-tab-2' });
+  await emit(host, 'sync:source', { type: 'screen', name: 'Tab' });
+  const cleared = new Promise((resolve) => guest.on('sync:state', (s) => s.action === 'SOURCE' && s.playback.source.type === 'none' && resolve(s)));
+  host.disconnect();
+  await cleared; // after the (test-shortened) grace period
+
+  const host2 = await client();
+  await emit(host2, 'room:join', { roomId: 'grace2', name: 'Host', clientId: 'host-tab-3' });
+  await emit(host2, 'sync:source', { type: 'screen', name: 'Tab' });
+  const ended = new Promise((resolve) => guest.on('sync:state', (s) => s.action === 'SOURCE' && s.playback.source.type === 'none' && resolve(s)));
+  const t0 = Date.now();
+  host2.emit('room:leave'); // closing the tab
+  await ended;
+  assert.ok(Date.now() - t0 < 250, 'no grace period for a deliberate leave');
 });

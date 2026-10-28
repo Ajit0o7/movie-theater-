@@ -46,10 +46,15 @@ function loadApi() {
     const script = document.createElement('script');
     script.src = 'https://www.youtube.com/iframe_api';
     script.async = true;
-    script.onerror = () => {
+    const fail = () => {
       apiPromise = null;
-      reject(new Error('Could not load the YouTube player. Check your connection or ad blocker.'));
+      reject(new Error('Couldn’t load the YouTube player. An ad blocker or privacy shield (uBlock Origin, Brave Shields…) may be blocking youtube.com; allow it for this site and try again.'));
     };
+    script.onerror = fail;
+    // Some blockers replace the script with a stub that never calls back: don't wait forever.
+    setTimeout(() => {
+      if (!window.YT?.Player) fail();
+    }, API_TIMEOUT_MS);
     document.head.append(script);
   });
   return apiPromise;
@@ -57,12 +62,15 @@ function loadApi() {
 
 const S = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
 
+const API_TIMEOUT_MS = 12000;
+const EMBED_BLOCKED = 'The owner of this YouTube video doesn’t allow it to be played on other sites (common for music videos, trailers and age-restricted videos). To watch it together, play it in a YouTube tab and use “Share screen or tab”.';
+
 const ERRORS = {
   2: 'That YouTube link is invalid.',
   5: 'This YouTube video can’t be played in an embedded player.',
   100: 'This YouTube video was removed or is private.',
-  101: 'The owner of this YouTube video doesn’t allow it to be played on other sites.',
-  150: 'The owner of this YouTube video doesn’t allow it to be played on other sites.',
+  101: EMBED_BLOCKED,
+  150: EMBED_BLOCKED,
 };
 
 export class YouTubeVideo extends EventTarget {
