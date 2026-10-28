@@ -15,6 +15,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "compression": "^1.8.2",
     "express": "^5.1.0",
     "selfsigned": "^5.5.0",
     "socket.io": "^4.8.1"

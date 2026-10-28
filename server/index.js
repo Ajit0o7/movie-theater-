@@ -1,6 +1,7 @@
 // HTTP + Socket.io server: serves the client, relays WebRTC signaling and
 // owns the authoritative room state (playback sync, chat, presence).
 
+import compression from 'compression';
 import express from 'express';
 import fs from 'node:fs';
 import { createServer } from 'node:http';
@@ -47,6 +48,7 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
   const cleanupTimers = new Map();
 
   app.disable('x-powered-by');
+  app.use(compression()); // gzip: the client's JS/CSS shrink ~4x (Socket.io compresses its own)
   app.use(express.json({ limit: '10kb' }));
   app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
@@ -243,6 +245,16 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
         // player is the clock, and re-applying a slightly old snapshot would nudge it.
         socket.to(room.id).emit('sync:state', { playback, action: 'HEARTBEAT' });
       }
+    });
+
+    // A viewer whose connection can't keep up: tell the others once per source, so whoever
+    // picked the video knows why that person keeps buffering.
+    on('sync:struggling', () => {
+      const me = self();
+      const sourceId = room?.playback.source.id;
+      if (!me || !sourceId || me.reportedStruggle === sourceId) return;
+      me.reportedStruggle = sourceId;
+      socket.to(room.id).emit('peer:struggling', { name: me.name });
     });
 
     on('chat:send', ({ text }) => {

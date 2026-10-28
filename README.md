@@ -110,6 +110,7 @@ Some limits come from browsers or networks and can't be removed by a web app. Th
 | Netflix, Disney+ and similar show black when shared | DRM blocks capture | Noted on the *Share screen* card. |
 | A YouTube video won't embed, or YouTube is blocked | The owner disabled embedding, or an ad blocker blocks `youtube.com` | Specific messages for each; for blocked embeds, suggests sharing a YouTube tab. |
 | A pasted link doesn't play | An `http://` link on an `https://` site, a share page instead of a file, or a host without seeking support | Refuses `http://` on `https://` with the https version suggested, converts Dropbox share links, explains Google Drive/OneDrive/MEGA, and warns when seeking won't work. |
+| A viewer's internet is slower than the video (for example 0.7 Mbps for a 1.1 Mbps file) | It can't download fast enough to play in real time; no sync trick changes that | Detects it after about 20 s of watching (30% or more of the time spent buffering), stops wasting downloaded video on frequent jumps (one catch-up every 20 s instead of every 4 s), and tells that viewer and the rest of the room why. In a test this cut buffering time by about a third. A smaller file, or *Same file everywhere*, is the real fix. |
 | A Bluetooth headset dies mid-call | The mic track ends | Switches to the system's default mic (or turns the mic off) and says so. |
 
 ## Keyboard shortcuts
@@ -147,7 +148,7 @@ public/
   js/media.js      Capture constraints (4K display, voice vs. movie audio)
 ```
 
-**Sync model.** The server holds the authoritative playback clock as `{ playing, time, serverTime }`. Clients estimate their offset from server time with ping round-trips, extrapolate the expected position, and steer toward it. They seek on large drift and nudge `playbackRate` ±5% on small drift. UI actions are sent as *intents* (`PLAY`/`PAUSE`/`SEEK`) rather than inferred from `<video>` events, so applying a remote change never echoes back to the server.
+**Sync model.** The server holds the authoritative playback clock as `{ playing, time, serverTime }`. Clients estimate their offset from server time with ping round-trips, extrapolate the expected position, and steer toward it. Under 0.25 s of drift is ignored. Up to 1.5 s is closed by nudging `playbackRate` ±5%. Beyond that, a viewer who is *behind* jumps ahead (aiming past the target by their measured seek delay, never past the end). A viewer who is *ahead* pauses for the gap instead of seeking back, which would discard buffered video. UI actions are sent as *intents* (`PLAY`/`PAUSE`/`SEEK`) rather than inferred from `<video>` events, so applying a remote change never echoes back to the server.
 
 **Media model.** Each pair of participants shares one `RTCPeerConnection` (a full mesh, capped at 8 people). Local media lives in four slots (`camVideo`, `micAudio`, `movieVideo`, `movieAudio`) grouped into a *camera* stream and a *movie* stream. Toggling the camera or changing the movie uses `replaceTrack()` and doesn't renegotiate. Each client announces its stream IDs over Socket.io, so receivers know which incoming stream is a webcam and which is the movie.
 

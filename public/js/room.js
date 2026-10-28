@@ -245,6 +245,16 @@ async function joinRoom() {
     );
   });
   sync.addEventListener('state', ({ detail }) => onSyncState(detail));
+  sync.addEventListener('struggling', () => {
+    const src = session?.sync.source;
+    toast(
+      src?.type === 'youtube'
+        ? 'Your connection is struggling with this video, so it keeps pausing to load. YouTube lowers the quality automatically; closing other downloads or moving closer to the Wi-Fi helps.'
+        : 'Your connection is slower than this video needs, so it keeps pausing to load, and jumping ahead can’t fix that. Closing other downloads helps. Otherwise ask the host for a smaller file, or use “Same file everywhere” with your own copy.',
+      { tone: 'warn', duration: 14000 },
+    );
+    socket.emit('sync:struggling');
+  });
   sync.addEventListener('blocked', ({ detail }) => ($('#unblock').hidden = !detail.blocked));
 
   on('peer:joined', (p) => {
@@ -254,6 +264,9 @@ async function joinRoom() {
   on('peer:left', ({ id, name }) => {
     removePeer(id);
     if (name && !session.sync.source.ownerAway) toast(`${name} left`); // a dropped host gets "lost connection"
+  });
+  on('peer:struggling', ({ name }) => {
+    toast(`${name}’s connection can’t keep up with this video, so it keeps buffering for them. A smaller file, or “Same file everywhere”, would help.`, { tone: 'warn', duration: 9000 });
   });
   on('cam:layout', ({ id, cam }) => {
     deck.get(id === session.selfId ? 'self' : id)?.applyLayout(cam, { remote: true });
@@ -1172,6 +1185,7 @@ async function updateStats() {
     lines.push(['Mode', sync.source.type === 'url' ? 'Direct link (each viewer streams the source)' : 'Local copy (nothing sent over the network)']);
   }
   const m = media();
+  if (sync.isController && sync.state?.playing) lines.push(['Buffering (30 s)', `${Math.round(sync.bufferingShare * 100)}%`]);
   lines.push(['Drift', sync.isController && m.readyState ? `${((m.currentTime - sync.expectedTime()) * 1000).toFixed(0)} ms` : '—']);
 
   chip.hidden = !label;
