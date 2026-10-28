@@ -1,24 +1,33 @@
-// Freely floating, draggable webcam tiles.
+// Freely floating, draggable webcam tiles with a layout shared by the whole room.
 //
-// Positions use GPU-composited transform: translate3d() and are clamped to the viewport.
-// Each viewer arranges tiles for themselves; layouts are remembered per name.
+// Whoever drags or resizes a tile moves it for everyone: local changes are reported through
+// `deck.onLayout`, remote ones arrive via `tile.applyLayout`. A position is stored as
+// fractions (0..1) of the free space (viewport minus the tile), so a tile left at the
+// bottom-right stays at the bottom-right on every screen, whatever its size.
+//
+// Pixels are applied with GPU-composited transform: translate3d().
 
-import { clamp, h, hueFor, icon, initials, storage } from './util.js';
+import { clamp, h, hueFor, icon, initials } from './util.js';
 
 const SIZES = ['s', 'm', 'l'];
-const LAYOUT_KEY = 'cinema.camLayout';
-const MARGIN = 16;
+const ALL_SIZES = ['s', 'm', 'l', 'min'];
+const DRAG_SEND_INTERVAL_MS = 40; // live movement is shared ~25×/s
+const REMOTE_MOVE_MS = 200;
+
+export const DEFAULT_LAYOUT = { fx: 1, fy: 0.84, size: 'm' };
 
 export class DraggableCamera {
-  constructor(element, { onMove } = {}) {
+  /** `getLayout()` returns the fractions; `onDrag(fx, fy, final)` reports a drag. */
+  constructor(element, { onDrag } = {}) {
     this.element = element;
-    this.onMove = onMove;
-    this.x = 0;
-    this.y = 0;
+    this.onDrag = onDrag;
     this.dragging = false;
     this.pointerId = null;
     this.start = { x: 0, y: 0 };
     this.moved = false;
+    this.fx = 1;
+    this.fy = 0.84;
+    this.sendTimer = null;
 
     element.addEventListener('pointerdown', (e) => this.#down(e));
     element.addEventListener('pointermove', (e) => this.#move(e));
@@ -26,17 +35,26 @@ export class DraggableCamera {
     element.addEventListener('pointercancel', (e) => this.#up(e));
   }
 
-  moveTo(x, y) {
-    const maxX = window.innerWidth - this.element.offsetWidth;
-    const maxY = window.innerHeight - this.element.offsetHeight;
-    this.x = clamp(x, 0, Math.max(0, maxX));
-    this.y = clamp(y, 0, Math.max(0, maxY));
+  #free() {
+    return {
+      w: Math.max(0, window.innerWidth - this.element.offsetWidth),
+      h: Math.max(0, window.innerHeight - this.element.offsetHeight),
+    };
+  }
+
+  /** Positions the tile from fractions of free space. */
+  place(fx, fy) {
+    this.fx = clamp(fx, 0, 1);
+    this.fy = clamp(fy, 0, 1);
+    const free = this.#free();
+    this.x = this.fx * free.w;
+    this.y = this.fy * free.h;
     this.element.style.transform = `translate3d(${this.x}px, ${this.y}px, 0)`;
   }
 
-  /** Re-clamp after resize/size change. */
-  clamp() {
-    this.moveTo(this.x, this.y);
+  /** Re-apply after a window resize or a size change (the tile's width changed). */
+  reflow() {
+    this.place(this.fx, this.fy);
   }
 
   #down(e) {
@@ -47,19 +65,30 @@ export class DraggableCamera {
     this.start = { x: e.clientX - this.x, y: e.clientY - this.y };
     this.element.setPointerCapture(e.pointerId);
     this.element.classList.add('is-dragging');
+    this.element.classList.remove('remote-move');
   }
 
   #move(e) {
     if (!this.dragging || e.pointerId !== this.pointerId) return;
     this.moved = true;
-    this.moveTo(e.clientX - this.start.x, e.clientY - this.start.y);
+    const free = this.#free();
+    const x = clamp(e.clientX - this.start.x, 0, free.w);
+    const y = clamp(e.clientY - this.start.y, 0, free.h);
+    this.place(free.w ? x / free.w : 0, free.h ? y / free.h : 0);
+    // Throttled live updates, so everyone watches the tile move rather than jump.
+    this.sendTimer ??= setTimeout(() => {
+      this.sendTimer = null;
+      if (this.dragging) this.onDrag?.(this.fx, this.fy, false);
+    }, DRAG_SEND_INTERVAL_MS);
   }
 
   #up(e) {
     if (!this.dragging || e.pointerId !== this.pointerId) return;
     this.dragging = false;
+    clearTimeout(this.sendTimer);
+    this.sendTimer = null;
     this.element.classList.remove('is-dragging');
-    if (this.moved) this.onMove?.(this.x, this.y);
+    if (this.moved) this.onDrag?.(this.fx, this.fy, true);
   }
 }
 
@@ -67,37 +96,46 @@ export class CameraDeck {
   constructor(root) {
     this.root = root;
     this.tiles = new Map(); // key -> tile
-    this.layout = storage.get(LAYOUT_KEY, {});
     this.voiceVolume = 1;
+    /** Set by the page: called with (key, { fx, fy, size }) when the local user changes a tile. */
+    this.onLayout = null;
     window.addEventListener('resize', () => {
-      for (const tile of this.tiles.values()) tile.drag.clamp();
+      for (const tile of this.tiles.values()) tile.drag.reflow();
     });
   }
 
-  /** Adds or returns the tile for a participant. */
-  ensure(key, { name, isSelf = false }) {
+  /** Adds or returns the tile for a participant. `cam` is the room's current layout for it. */
+  ensure(key, { name, isSelf = false, cam = null }) {
     let tile = this.tiles.get(key);
     if (tile) {
       tile.setName(name);
       return tile;
     }
-    const saved = this.layout[this.#layoutKey(name, isSelf)];
-    tile = this.#createTile(key, name, isSelf, saved);
+    tile = this.#createTile(key, name, isSelf);
     this.tiles.set(key, tile);
     this.root.append(tile.el);
-    this.#placeInitially(tile, saved);
+    tile.applyLayout(cam ?? DEFAULT_LAYOUT);
+    // Fonts/CSS may still settle: re-apply once laid out so the pixel position is exact.
+    requestAnimationFrame(() => tile.drag.reflow());
     return tile;
   }
 
   remove(key) {
     const tile = this.tiles.get(key);
     if (!tile) return;
+    clearTimeout(tile.moveTimer);
     tile.el.remove();
     this.tiles.delete(key);
   }
 
   get(key) {
     return this.tiles.get(key);
+  }
+
+  /** Tells the room where a tile currently is (used after a reconnect). */
+  announce(key) {
+    const tile = this.tiles.get(key);
+    if (tile) this.onLayout?.(key, { ...tile.layout });
   }
 
   setVoiceVolume(volume) {
@@ -107,7 +145,7 @@ export class CameraDeck {
     }
   }
 
-  #createTile(key, name, isSelf, saved) {
+  #createTile(key, name, isSelf) {
     const video = h('video', { autoplay: true, playsinline: true });
     video.muted = isSelf; // never play your own voice back
     if (isSelf) video.classList.add('mirrored');
@@ -134,8 +172,9 @@ export class CameraDeck {
       video,
       isSelf,
       name,
-      size: saved?.size ?? 'm',
+      layout: { ...DEFAULT_LAYOUT },
       drag: null,
+      moveTimer: null,
       setName: (n) => {
         tile.name = n;
         label.textContent = isSelf ? `${n} (you)` : n;
@@ -151,59 +190,52 @@ export class CameraDeck {
         el.classList.toggle('mic-off', !mic);
       },
       setSpeaking: (speaking) => el.classList.toggle('speaking', speaking),
-      setSize: (size, { persist = true } = {}) => {
-        tile.size = size;
+
+      /** Applies a layout: from the room (`remote`) or from a local change that is then shared. */
+      applyLayout: (next, { remote = false } = {}) => {
+        if (tile.drag.dragging) return; // never fight the user's own drag
+        const size = ALL_SIZES.includes(next.size) ? next.size : tile.layout.size;
+        tile.layout = { fx: clamp(Number(next.fx) || 0, 0, 1), fy: clamp(Number(next.fy) || 0, 0, 1), size };
+        if (remote) {
+          // Glide to the new spot instead of teleporting.
+          el.classList.add('remote-move');
+          clearTimeout(tile.moveTimer);
+          tile.moveTimer = setTimeout(() => el.classList.remove('remote-move'), REMOTE_MOVE_MS + 50);
+        }
         el.classList.remove('size-s', 'size-m', 'size-l', 'size-min');
         el.classList.add(`size-${size}`);
         for (const b of tools.querySelectorAll('[data-size]')) b.classList.toggle('active', b.dataset.size === size);
-        requestAnimationFrame(() => tile.drag.clamp());
-        if (persist) this.#save(tile);
+        tile.drag.place(tile.layout.fx, tile.layout.fy);
+        // The width changes with the size class (animated), so settle the position afterwards.
+        requestAnimationFrame(() => tile.drag.reflow());
+        setTimeout(() => tile.drag.reflow(), 260);
+      },
+
+      /** A local size change: apply it, then share it with the room. */
+      setSize: (size) => {
+        tile.applyLayout({ ...tile.layout, size });
+        this.onLayout?.(key, { ...tile.layout });
       },
     };
 
-    tile.drag = new DraggableCamera(el, { onMove: () => this.#save(tile) });
+    tile.drag = new DraggableCamera(el, {
+      onDrag: (fx, fy, final) => {
+        tile.layout = { ...tile.layout, fx, fy };
+        this.onLayout?.(key, { ...tile.layout, final });
+      },
+    });
     tools.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-size]');
       if (btn) tile.setSize(btn.dataset.size);
     });
     // Double-click a tile (or tap the badge) to cycle size / restore from badge.
-    el.addEventListener('dblclick', () => tile.setSize(tile.size === 'min' ? 'm' : SIZES[(SIZES.indexOf(tile.size) + 1) % 3]));
+    el.addEventListener('dblclick', () => tile.setSize(tile.layout.size === 'min' ? 'm' : SIZES[(SIZES.indexOf(tile.layout.size) + 1) % 3]));
     el.addEventListener('click', () => {
-      if (tile.size === 'min' && !tile.drag.moved) tile.setSize('m');
+      if (tile.layout.size === 'min' && !tile.drag.moved) tile.setSize('m');
     });
 
     tile.setName(name);
-    tile.setSize(tile.size, { persist: false });
     return tile;
-  }
-
-  #placeInitially(tile, saved) {
-    requestAnimationFrame(() => {
-      if (saved && Number.isFinite(saved.xr) && Number.isFinite(saved.yr)) {
-        tile.drag.moveTo(saved.xr * window.innerWidth, saved.yr * window.innerHeight);
-        return;
-      }
-      // Stack new tiles up the right edge, above the HUD.
-      const index = [...this.tiles.values()].indexOf(tile);
-      const w = tile.el.offsetWidth;
-      const hgt = tile.el.offsetHeight;
-      tile.drag.moveTo(window.innerWidth - w - MARGIN, window.innerHeight - 120 - (hgt + 12) * (index + 1));
-    });
-  }
-
-  #layoutKey(name, isSelf) {
-    return isSelf ? '__self__' : `peer:${name}`;
-  }
-
-  #save(tile) {
-    if (!tile.drag) return;
-    // Store relative position so layouts survive window size changes.
-    this.layout[this.#layoutKey(tile.name, tile.isSelf)] = {
-      xr: tile.drag.x / Math.max(1, window.innerWidth),
-      yr: tile.drag.y / Math.max(1, window.innerHeight),
-      size: tile.size,
-    };
-    storage.set(LAYOUT_KEY, this.layout);
   }
 }
 

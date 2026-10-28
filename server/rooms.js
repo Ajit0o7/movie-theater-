@@ -83,6 +83,36 @@ export function snapshotPlayback(playback, now = Date.now()) {
   };
 }
 
+// Camera tiles are laid out once per room and shared by everyone. A position is stored as
+// fractions (0..1) of the *free* space (viewport minus the tile), so "bottom-right" is
+// bottom-right on every screen regardless of its size.
+export const CAM_SIZES = ['s', 'm', 'l', 'min'];
+const SLOTS_PER_COLUMN = 3;
+
+/** Default spot for the n-th person: stacked up the right edge, then a second column. */
+export function defaultCamLayout(slot) {
+  const column = Math.floor(slot / SLOTS_PER_COLUMN);
+  const row = slot % SLOTS_PER_COLUMN;
+  return { fx: Math.max(0, 1 - column * 0.16), fy: Math.max(0, 0.84 - row * 0.3), size: 'm' };
+}
+
+export function normalizeCamLayout(input, fallback) {
+  const num = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.min(1, Math.max(0, Number(v))) : d);
+  return {
+    fx: num(input?.fx, fallback.fx),
+    fy: num(input?.fy, fallback.fy),
+    size: CAM_SIZES.includes(input?.size) ? input.size : fallback.size,
+  };
+}
+
+/** Lets anyone arrange anyone's tile. Returns the stored layout, or null for an unknown tile. */
+export function setCamLayout(room, targetId, input) {
+  const target = room.participants.get(targetId);
+  if (!target) return null;
+  target.cam = normalizeCamLayout(input, target.cam);
+  return target.cam;
+}
+
 export const isValidClientId = (id) => typeof id === 'string' && /^[\w-]{6,64}$/.test(id);
 
 /** The participant (if any) that an earlier connection of the same browser tab created. */
@@ -96,8 +126,13 @@ export function addParticipant(room, id, name, now = Date.now(), clientId = null
   if (room.participants.size >= MAX_PARTICIPANTS) {
     throw new RoomError('ROOM_FULL', `Room is full (max ${MAX_PARTICIPANTS} people).`);
   }
+  const taken = new Set([...room.participants.values()].map((p) => p.slot));
+  let slot = 0;
+  while (taken.has(slot)) slot++;
   const participant = {
     id,
+    slot,
+    cam: defaultCamLayout(slot),
     clientId: isValidClientId(clientId) ? clientId : null, // private: never sent to other clients
     name: sanitizeName(name),
     joinedAt: now,
@@ -122,7 +157,7 @@ export function removeParticipant(room, id, now = Date.now()) {
 }
 
 export function publicParticipant(p) {
-  return { id: p.id, name: p.name, media: { ...p.media }, status: { ...p.status } };
+  return { id: p.id, name: p.name, media: { ...p.media }, status: { ...p.status }, cam: { ...p.cam } };
 }
 
 export function listParticipants(room) {

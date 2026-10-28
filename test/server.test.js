@@ -155,3 +155,32 @@ test('a reconnect from the same tab replaces its old connection instead of leavi
   assert.equal(join.playback.source.type, 'none', "the ghost's screen share was cleared");
   assert.equal(join.self.clientId, undefined, 'client ids stay private');
 });
+
+test('moving or resizing a camera tile is shared with everyone, including late joiners', async () => {
+  const a = await client();
+  const b = await client();
+  const joinA = await emit(a, 'room:join', { roomId: 'layouts', name: 'Ajit' });
+  const joinB = await emit(b, 'room:join', { roomId: 'layouts', name: 'Friend' });
+  assert.notDeepEqual(joinA.self.cam, joinB.self.cam, 'each person starts on their own spot');
+
+  // Ajit drags Ajit's tile and enlarges it; Friend sees it with Ajit's id.
+  const seen = once(b, 'cam:layout');
+  a.emit('cam:layout', { id: a.id, cam: { fx: 0.1, fy: 0.2, size: 'l' } });
+  assert.deepEqual(await seen, { id: a.id, cam: { fx: 0.1, fy: 0.2, size: 'l' } });
+
+  // Friend moves Ajit's tile; Ajit sees it too (any participant arranges any tile).
+  const seenByA = once(a, 'cam:layout');
+  b.emit('cam:layout', { id: a.id, cam: { fx: 0.9, fy: 0.9, size: 's' } });
+  assert.deepEqual((await seenByA).cam, { fx: 0.9, fy: 0.9, size: 's' });
+
+  const late = await client();
+  const joinLate = await emit(late, 'room:join', { roomId: 'layouts', name: 'Late' });
+  const ajit = joinLate.peers.find((p) => p.name === 'Ajit');
+  assert.deepEqual(ajit.cam, { fx: 0.9, fy: 0.9, size: 's' });
+
+  // Unknown tiles and junk are ignored without a crash.
+  a.emit('cam:layout', { id: 'nobody', cam: { fx: 0, fy: 0 } });
+  a.emit('cam:layout', null);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await fetch(`${baseUrl}/healthz`)).status, 200);
+});

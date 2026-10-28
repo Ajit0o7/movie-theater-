@@ -22,6 +22,7 @@ import {
   listParticipants,
   publicParticipant,
   removeParticipant,
+  setCamLayout,
   setMedia,
   setStatus,
   setSource,
@@ -167,6 +168,14 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
       if (!room) return;
       const next = setStatus(room, socket.id, status);
       if (next) socket.to(room.id).emit('peer:status', { id: socket.id, status: next });
+    });
+
+    // Camera tiles are arranged for the whole room: whoever moves or resizes a tile moves it
+    // for everyone (last change wins), and late joiners receive the current layout.
+    on('cam:layout', ({ id, cam }) => {
+      if (!room) return;
+      const stored = setCamLayout(room, id, cam);
+      if (stored) socket.to(room.id).emit('cam:layout', { id, cam: stored });
     });
 
     on('sync:source', (input, ack) => {

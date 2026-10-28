@@ -25,6 +25,13 @@ const roomId = decodeURIComponent(location.pathname.split('/').filter(Boolean).p
 const player = $('#player');
 const deck = new CameraDeck($('#cameras'));
 const detector = new SpeakingDetector();
+
+// Camera layout is shared by the whole room: whatever this user does to a tile is sent to
+// everyone (their own tile is keyed 'self' locally, but by socket id on the wire).
+deck.onLayout = (key, { fx, fy, size, final }) => {
+  if (!session || !socket?.connected) return;
+  socket.emit('cam:layout', { id: key === 'self' ? session.selfId : key, cam: { fx, fy, size } });
+};
 const ambilight = new Ambilight(player, $('#ambilight'));
 
 const settings = {
@@ -232,6 +239,9 @@ async function joinRoom() {
     removePeer(id);
     if (name) toast(`${name} left`);
   });
+  on('cam:layout', ({ id, cam }) => {
+    deck.get(id === session.selfId ? 'self' : id)?.applyLayout(cam, { remote: true });
+  });
   on('peer:status', ({ id, status }) => {
     const p = session.peers.get(id);
     if (!p) return;
@@ -255,7 +265,10 @@ async function joinRoom() {
 
   session.self = res.self;
   local.name = res.self.name;
-  const selfTile = deck.ensure('self', { name: local.name, isSelf: true });
+  const hadSelfTile = deck.get('self') !== undefined;
+  const selfTile = deck.ensure('self', { name: local.name, isSelf: true, cam: res.self.cam });
+  // After a reconnect the server only knows our default spot; tell it where our tile really is.
+  if (hadSelfTile) deck.announce('self');
   selfTile.setStatus(localStatus());
   refreshSelfTile();
 
@@ -299,7 +312,7 @@ function addPeer(p) {
   if (session.peers.has(p.id)) return;
   session.peers.set(p.id, { ...p, media: { ...p.media }, status: p.status ?? { camera: false, mic: false } });
   session.rtc.addPeer(p.id);
-  const tile = deck.ensure(p.id, { name: p.name });
+  const tile = deck.ensure(p.id, { name: p.name, cam: p.cam });
   tile.setStatus(session.peers.get(p.id).status);
   reconcilePeer(p.id);
   renderPeople();

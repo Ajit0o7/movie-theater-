@@ -10,7 +10,9 @@ import {
   currentTime,
   generateRoomId,
   isValidRoomId,
+  publicParticipant,
   removeParticipant,
+  setCamLayout,
   sanitizeName,
   setMedia,
   setSource,
@@ -149,4 +151,28 @@ test('restarting the same file gets a new source id, so clients reload it', () =
   assert.equal(first.source.id, 'client-proposed-1');
   assert.ok(again.source.id && again.source.id !== first.source.id);
   assert.notEqual(setSource(room, 'p0', { type: 'stream', name: 'x', id: '<bad id>' }).source.id, '<bad id>');
+});
+
+test('camera tiles get distinct default spots, anyone can move any tile, input is clamped', () => {
+  const room = roomWith('A', 'B', 'C', 'D');
+  const spots = [...room.participants.values()].map((p) => `${p.cam.fx},${p.cam.fy}`);
+  assert.equal(new Set(spots).size, 4, 'no two people start on the same spot');
+  assert.equal(room.participants.get('p0').cam.fx, 1, 'first tile starts at the right edge');
+
+  // p1 moves p0's tile (any participant may arrange any tile)
+  const moved = setCamLayout(room, 'p0', { fx: 0.25, fy: 0.5, size: 'l' });
+  assert.deepEqual(moved, { fx: 0.25, fy: 0.5, size: 'l' });
+  assert.deepEqual(publicParticipant(room.participants.get('p0')).cam, moved, 'late joiners receive it');
+
+  assert.deepEqual(setCamLayout(room, 'p0', { fx: 9, fy: -3, size: 'huge' }), { fx: 1, fy: 0, size: 'l' }, 'clamped; bad size keeps the old one');
+  assert.deepEqual(setCamLayout(room, 'p0', { fx: 'x', fy: null }), { fx: 1, fy: 0, size: 'l' }, 'junk keeps old values');
+  assert.equal(setCamLayout(room, 'nobody', { fx: 0, fy: 0 }), null);
+});
+
+test('a freed slot is reused by the next person to join', () => {
+  const room = roomWith('A', 'B', 'C');
+  const spot = room.participants.get('p1').cam;
+  removeParticipant(room, 'p1');
+  addParticipant(room, 'p9', 'New');
+  assert.deepEqual(room.participants.get('p9').cam, spot);
 });
