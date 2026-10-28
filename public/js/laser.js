@@ -10,15 +10,6 @@ export const TRAIL_MS = 2000;
 const SEND_INTERVAL_MS = 33;
 const MAX_POINTS_PER_SEND = 24;
 
-/** Pure: the box a video of (vw × vh) occupies inside (w × h) with object-fit: contain. */
-export function containBox(boxW, boxH, videoW, videoH) {
-  if (!(videoW > 0 && videoH > 0 && boxW > 0 && boxH > 0)) return { x: 0, y: 0, w: boxW, h: boxH };
-  const scale = Math.min(boxW / videoW, boxH / videoH);
-  const w = videoW * scale;
-  const h = videoH * scale;
-  return { x: (boxW - w) / 2, y: (boxH - h) / 2, w, h };
-}
-
 /** Pure: viewport point → fraction of the picture (allowing a little outside, into the bars). */
 export function toPicture(x, y, box) {
   const clamp = (v) => Math.max(-0.5, Math.min(1.5, v));

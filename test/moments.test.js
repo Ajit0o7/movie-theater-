@@ -35,7 +35,8 @@ test('spatial pan follows the tile across the screen, never fully one-sided', as
 });
 
 test('laser points are picture fractions, so they land on the same spot on any screen', async () => {
-  const { containBox, toPicture } = await import('../public/js/laser.js');
+  const { toPicture } = await import('../public/js/laser.js');
+  const { containBox } = await import('../public/js/geometry.js');
   // A 16:9 movie on a 4:3 screen: bars top and bottom.
   const box = containBox(1024, 768, 1920, 1080);
   assert.deepEqual(box, { x: 0, y: 96, w: 1024, h: 576 });

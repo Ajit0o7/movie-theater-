@@ -20,9 +20,11 @@ import { MOVIE_JITTER_BUFFER_MS, PeerManager, meshBudget } from './rtc.js';
 import { DEFAULT_SUB_STYLE, setupSubtitles } from './subtitles-ui.js';
 import { TimelineMoments } from './moments.js';
 import { SpatialVoices } from './spatial.js';
-import { LaserLayer, containBox, setupLaserInput } from './laser.js';
+import { LaserLayer, setupLaserInput } from './laser.js';
+import { IDENTITY, containBox, fillTransform, transformBox } from './geometry.js';
+import { isTouch, setupTouchGestures } from './gestures.js';
 import { CinemaSync, ClockSync } from './sync.js';
-import { $, $$, formatTime, h, storage, toast } from './util.js';
+import { $, $$, clamp, formatTime, h, icon, storage, toast } from './util.js';
 import { checkVideoLink } from './links.js';
 import { YouTubeVideo, parseYouTubeUrl, youtubeQualityLabel } from './youtube.js';
 
@@ -37,13 +39,15 @@ deck.onLayout = (key, { fx, fy, size, final }) => {
   if (!session || !socket?.connected) return;
   socket.emit('cam:layout', { id: key === 'self' ? session.selfId : key, cam: { fx, fy, size } });
 };
-const ambilight = new Ambilight(player, $('#ambilight'), { getBox: pictureBox });
+const ambilight = new Ambilight(player, $('#ambilight'), { getBox: pictureBox, onCrop: () => layoutPicture() });
 
 const settings = {
   movieVolume: 1,
   voiceVolume: 1,
   ambilight: true,
   spatial: false,
+  fill: false, // zoom the picture to cover the screen (pinch / Z)
+  brightness: 1, // dimming from a swipe on the left half (0.2–1)
   quality: DEFAULT_PRESET,
   ...storage.get('cinema.settings', {}),
 };
@@ -54,6 +58,7 @@ const currentPreset = () => STREAM_PRESETS[settings.quality];
 // The thing actually playing: the <video> element, or the YouTube adapter.
 let yt = null;
 const media = () => yt ?? player;
+let zoom = IDENTITY; // fill mode's transform of the picture
 
 /**
  * The movie time this viewer is looking at, for subtitles. A guest watching a host's
@@ -138,21 +143,34 @@ function measureHud() {
 measureHud();
 window.addEventListener('resize', () => {
   measureHud();
-  ambilight.relayout();
+  layoutPicture();
 });
-player.addEventListener('resize', () => ambilight.relayout()); // a stream changed resolution
+player.addEventListener('resize', layoutPicture); // new video, or a stream changed resolution
 
 // Each friend's voice panned toward their camera tile (opt-in; best with headphones).
 const spatial = new SpatialVoices({ getContext: () => detector.ensureContext() });
 
-// Where the picture is on screen (inside any letterbox bars), so a laser point lands on the
-// same spot of the movie for everyone, whatever their screen size.
+const videoSize = () => (yt ? [16, 9] : player.videoWidth ? [player.videoWidth, player.videoHeight] : null);
+
+// Fit shows the whole picture; fill zooms it (minus any black bars baked into the file) to
+// cover the screen. It's a CSS transform, so the 4K video itself is never re-rendered.
+function layoutPicture() {
+  const size = videoSize();
+  zoom = settings.fill && size ? fillTransform(innerWidth, innerHeight, ...size, yt ? undefined : ambilight.crop) : IDENTITY;
+  const transform = zoom === IDENTITY ? '' : `translate(${zoom.tx.toFixed(1)}px, ${zoom.ty.toFixed(1)}px) scale(${zoom.s.toFixed(4)})`;
+  player.style.transform = transform;
+  $('#yt-host').style.transform = transform;
+  ambilight.relayout();
+}
+
+// Where the picture is on screen (inside any letterbox bars, zoomed when filling), so a laser
+// point lands on the same spot of the movie for everyone, whatever their screen size.
 function pictureBox() {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  if (yt) return containBox(w, h, 16, 9);
-  if (player.videoWidth) return containBox(w, h, player.videoWidth, player.videoHeight);
-  return { x: 0, y: 0, w, h };
+  const size = videoSize();
+  if (!size) return { x: 0, y: 0, w, h };
+  return transformBox(containBox(w, h, ...size), zoom, w, h);
 }
 const laserLayer = new LaserLayer($('#laser-layer'), { getBox: pictureBox });
 const laser = setupLaserInput({
@@ -919,6 +937,7 @@ function mountYouTube(videoId) {
     yt.addEventListener('loadedmetadata', () => {
       if (yt?.title && session?.sync.source.type === 'youtube') $('#now-playing').textContent = yt.title;
     });
+    layoutPicture();
   }
   session?.sync.setVideo(yt);
 }
@@ -930,6 +949,7 @@ function unmountYouTube() {
   $('#yt-host').hidden = true;
   player.hidden = false;
   session?.sync.setVideo(player);
+  layoutPicture();
 }
 
 /**
@@ -1153,6 +1173,10 @@ for (const evt of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart
   window.addEventListener(evt, wake, { passive: true });
 }
 wake();
+function hideHud() {
+  clearTimeout(idleTimer);
+  if (document.body.classList.contains('is-playing')) document.body.classList.add('idle');
+}
 
 function toggleFullscreen() {
   if (document.fullscreenElement) return document.exitFullscreen();
@@ -1207,6 +1231,8 @@ function applySettings() {
   spatial.setEnabled(settings.spatial);
   ambilight.setEnabled(settings.ambilight);
   $('#ambilight').hidden = !settings.ambilight;
+  $('#dimmer').style.opacity = (1 - settings.brightness).toFixed(3);
+  $('#dimmer').hidden = settings.brightness >= 1; // not even an empty layer over the video
   $('#movie-vol-out').textContent = `${movieVol.value}%`;
   $('#voice-vol-out').textContent = `${voiceVol.value}%`;
   storage.set('cinema.settings', settings);
@@ -1223,6 +1249,8 @@ ambToggle.addEventListener('change', () => {
   settings.ambilight = ambToggle.checked;
   applySettings();
 });
+$('#fill-toggle').checked = settings.fill;
+$('#fill-toggle').addEventListener('change', (e) => setFill(e.target.checked));
 $('#spatial-toggle').checked = settings.spatial;
 $('#spatial-toggle').addEventListener('change', (e) => {
   settings.spatial = e.target.checked;
@@ -1354,15 +1382,82 @@ document.addEventListener('click', (e) => {
 // <video> and the YouTube iframe alike, so YouTube's own UI can never desync the room.
 const shield = $('#click-shield');
 let clickTimer = null;
+let shieldTouch = false; // the last press on the movie was a finger or pen (gestures handle it)
+let hudWasHidden = false;
+shield.addEventListener('pointerdown', (e) => {
+  shieldTouch = isTouch(e);
+  hudWasHidden = document.body.classList.contains('idle'); // before the window's wake() shows it
+});
 shield.addEventListener('click', () => {
-  if (laser.active) return; // drawing with the laser, not pressing play
+  if (laser.active || shieldTouch) return; // drawing with the laser, or a tap (see gestures)
   // Wait briefly so a double-click (fullscreen) doesn't also toggle playback twice.
   clearTimeout(clickTimer);
   clickTimer = setTimeout(() => session?.sync.controllable && session.sync.toggle(), 220);
 });
 shield.addEventListener('dblclick', () => {
   clearTimeout(clickTimer);
-  toggleFullscreen();
+  if (!shieldTouch) toggleFullscreen();
+});
+
+// A pill in the middle (or on the side being tapped) saying what a gesture or key just did.
+const gestureHint = $('#gesture-hint');
+let gestureHintTimer = null;
+function showHint(side, iconName, text, level = null) {
+  gestureHint.dataset.side = side;
+  gestureHint.replaceChildren(
+    icon(iconName),
+    h('span', { text }),
+    ...(level === null ? [] : [h('span', { class: 'gesture-meter', style: `--v:${level.toFixed(3)}` }, [h('i')])]),
+  );
+  gestureHint.classList.add('show');
+  clearTimeout(gestureHintTimer);
+  gestureHintTimer = setTimeout(() => gestureHint.classList.remove('show'), 800);
+}
+
+function setFill(fill) {
+  if (settings.fill !== fill) {
+    settings.fill = fill;
+    $('#fill-toggle').checked = fill;
+    storage.set('cinema.settings', settings);
+    layoutPicture();
+  }
+  showHint('center', fill ? 'expand' : 'shrink', fill ? 'Fill screen' : 'Whole picture');
+}
+
+function adjustBrightness(delta) {
+  settings.brightness = clamp(settings.brightness + delta, 0.2, 1);
+  applySettings();
+  showHint('left', 'sun', `Brightness ${Math.round(settings.brightness * 100)}%`, (settings.brightness - 0.2) / 0.8);
+}
+
+function adjustVolume(delta) {
+  if (volumeLocked) return showHint('right', 'volume', 'Use the volume buttons');
+  settings.movieVolume = clamp(settings.movieVolume + delta, 0, 1);
+  movieVol.value = String(Math.round(settings.movieVolume * 100));
+  applySettings();
+  showHint('right', 'volume', `Volume ${movieVol.value}%`, settings.movieVolume);
+}
+
+// Phones and tablets: tap shows/hides the controls, double-tap a side skips 10 s (keep tapping
+// for more), double-tap the middle plays/pauses, swipe up/down for brightness (left) or volume
+// (right), pinch to fill the screen or fit the whole picture.
+setupTouchGestures(shield, {
+  enabled: () => Boolean(session) && !laser.active,
+  tap: () => !hudWasHidden && hideHud(),
+  togglePlay: () => {
+    if (!session.sync.controllable) return;
+    const wasPlaying = document.body.classList.contains('is-playing');
+    session.sync.toggle();
+    showHint('center', wasPlaying ? 'pause' : 'play', wasPlaying ? 'Pause' : 'Play');
+  },
+  seekPreview: (total) => {
+    if (!session?.sync.controllable) return false;
+    showHint(total < 0 ? 'left' : 'right', total < 0 ? 'rewind' : 'ffwd', `${total < 0 ? '−' : '+'}${Math.abs(total)} s`);
+    return true;
+  },
+  seek: (total) => session?.sync.seekBy(total),
+  swipe: (side, delta) => (side === 'left' ? adjustBrightness(delta) : adjustVolume(delta)),
+  pinch: (intent) => setFill(intent === 'fill'),
 });
 
 // Streaming quality picker (applies live to an ongoing share/stream).
@@ -1425,6 +1520,7 @@ document.addEventListener('keydown', (e) => {
     v: toggleCam,
     r: () => session.reactions.toggleTray(),
     p: toggleLaser,
+    z: () => setFill(!settings.fill),
     i: actions['toggle-stats'],
     s: () => subtitles.toggleVisible() || $('#subs-dialog').showModal(),
     '[': () => subtitles.earlier(),

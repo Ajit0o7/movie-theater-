@@ -214,9 +214,26 @@ h1, h2, h3, .brand {
 .player {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: contain; background: transparent; z-index: 1;
+  transition: transform 280ms var(--ease); /* fill / fit */
 }
 .yt-host iframe { width: 100%; height: 100%; border: 0; display: block; }
-.click-shield { position: absolute; inset: 0; z-index: 1; }
+.click-shield { position: absolute; inset: 0; z-index: 1; touch-action: none; /* taps, swipes and pinches are ours */ }
+/* Brightness (swipe on the left half): dims picture and glow without filtering the 4K video. */
+.dimmer { position: absolute; inset: 0; z-index: 1; background: #000; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+
+.gesture-hint {
+  position: absolute; top: 50%; left: 50%; z-index: 3; pointer-events: none;
+  display: flex; align-items: center; gap: 10px; padding: 11px 18px; border-radius: var(--radius-pill);
+  background: rgba(8, 8, 12, 0.66); color: #fff; font: 600 15px/1 var(--font-body); white-space: nowrap;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.8);
+  transform: translate(-50%, -50%) scale(0.92); opacity: 0; transition: opacity 180ms, transform 180ms var(--ease);
+}
+.gesture-hint.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.gesture-hint[data-side="left"] { left: 24%; }
+.gesture-hint[data-side="right"] { left: 76%; }
+.gesture-hint .icon { width: 22px; height: 22px; flex: none; }
+.gesture-meter { width: 84px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.22); overflow: hidden; }
+.gesture-meter > i { display: block; height: 100%; width: calc(var(--v) * 100%); background: var(--accent); border-radius: inherit; }
 body:not(.has-source) .click-shield { display: none; }
 
 .ambilight {
@@ -468,9 +485,10 @@ body.idle .cam-tools { opacity: 0 !important; }
 .cam-tile.remote-move {
   transition: transform 180ms linear, width 220ms var(--ease), border-radius 220ms var(--ease), box-shadow 200ms, border-color 200ms;
 }
-.cam-tile.size-s { --w: 160px; }
-.cam-tile.size-m { --w: 230px; }
-.cam-tile.size-l { --w: 350px; }
+/* Capped by height too: on a landscape phone (844×390) a 230px tile covered half the movie. */
+.cam-tile.size-s { --w: min(160px, 27vh); }
+.cam-tile.size-m { --w: min(230px, 36vh); }
+.cam-tile.size-l { --w: min(350px, 54vh); }
 .cam-tile.size-min { --w: 68px; aspect-ratio: 1; border-radius: 50%; }
 .cam-tile.is-dragging {
   cursor: grabbing; transition: width 220ms var(--ease);

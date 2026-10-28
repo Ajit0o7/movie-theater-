@@ -83,14 +83,16 @@ export class Ambilight {
    * @param canvas  the stretched glow (sits behind the video, or in front of it when the video
    *                has baked-in bars; it must come after the video in the DOM)
    * @param getBox  where the video element's picture is on screen, in viewport pixels
+   * @param onCrop  called when the bars found in the video change
    */
-  constructor(video, canvas, { getBox = null } = {}) {
+  constructor(video, canvas, { getBox = null, onCrop = null } = {}) {
     this.video = video;
     this.canvas = canvas;
     canvas.width = W;
     canvas.height = H;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.getBox = getBox;
+    this.onCrop = onCrop; // the picture's bars changed (fill mode zooms to the picture)
     this.analysis = document.createElement('canvas');
     this.analysis.width = AW;
     this.analysis.height = AH;
@@ -117,6 +119,7 @@ export class Ambilight {
     this.canAnalyse = true;
     this.#layout();
     this.#clear();
+    this.onCrop?.();
   }
 
   #clear() {
@@ -138,6 +141,7 @@ export class Ambilight {
       if (!confirmed || sameBars(found, this.crop)) return false;
       this.crop = found;
       this.#layout();
+      this.onCrop?.();
       return true;
     } catch {
       this.canAnalyse = false; // cross-origin video without CORS: can't read pixels, glow still works
