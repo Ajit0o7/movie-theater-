@@ -778,7 +778,7 @@ function ownerName(id) {
 
 function onSyncState({ playback, prev, actor, actorId, action, sourceChanged, optimistic }) {
   if (sourceChanged) renderSource();
-  if (optimistic || action === 'INIT' || action === 'HEARTBEAT' || actorId === session.selfId) return;
+  if (optimistic || action === 'INIT' || action === 'HEARTBEAT' || action === 'DURATION' || actorId === session.selfId) return;
   const who = actor || 'Someone';
   if (action === 'SOURCE' && sourceChanged) {
     if (playback.source.type === 'none') {

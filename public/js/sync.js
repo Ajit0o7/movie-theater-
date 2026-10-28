@@ -14,6 +14,7 @@ const NUDGE = 0.05;
 const COARSE_SEEK_THRESHOLD = 0.8; // players without fine playbackRate (YouTube) seek past this
 const HARD_SEEK_COOLDOWN_MS = 4000;
 const MAX_SEEK_LEAD = 6; // seconds
+const END_MARGIN = 0.25; // seconds kept clear of the end by catch-up seeks
 
 export class ClockSync {
   constructor(socket) {
@@ -53,13 +54,19 @@ export class CinemaSync extends EventTarget {
     // How long a catch-up seek takes to become playable on this connection. Catch-up seeks
     // aim that far ahead, so a slow connection doesn't land behind again and seek forever.
     this.seekLead = 0;
-    this.lastHardSeek = 0;
+    // performance.now() starts near 0 at page load, so 0 would count as "a seek just happened".
+    this.lastHardSeek = -Infinity;
     this.driftTimer = setInterval(() => this.#correctDrift(), 1000);
 
     this.onState = ({ playback, actor, actorId, action }) => {
       const prev = this.state;
       this.state = playback;
       const sourceChanged = !prev || !sameSource(prev.source, playback.source);
+      if (sourceChanged) {
+        // Seek latency belongs to one source (a different host or file behaves differently).
+        this.seekLead = 0;
+        this.lastHardSeek = -Infinity;
+      }
       this.dispatchEvent(new CustomEvent('state', { detail: { playback, prev, actor, actorId, action, sourceChanged } }));
       this.apply();
     };
@@ -243,7 +250,10 @@ export class CinemaSync extends EventTarget {
     this.lastHardSeek = started;
     const video = this.video;
     video.playbackRate = 1;
-    video.currentTime = this.expectedTime() + this.seekLead;
+    // Aim ahead by the measured seek latency, but never past the end: seeking beyond the
+    // duration fires 'ended', which would pause the whole room before the film finishes.
+    const end = Number.isFinite(video.duration) ? video.duration : Infinity;
+    video.currentTime = Math.min(this.expectedTime() + this.seekLead, Math.max(0, end - END_MARGIN));
     const measure = () => {
       if (this.video !== video) return;
       if (video.seeking || video.readyState < 3) {
@@ -279,10 +289,6 @@ export class CinemaSync extends EventTarget {
     } else if (!shouldBeat && this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
-    // How long a catch-up seek takes to become playable on this connection. Catch-up seeks
-    // aim that far ahead, so a slow connection doesn't land behind again and seek forever.
-    this.seekLead = 0;
-    this.lastHardSeek = 0;
     }
   }
 }

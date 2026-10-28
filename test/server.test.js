@@ -184,3 +184,38 @@ test('moving or resizing a camera tile is shared with everyone, including late j
   await new Promise((r) => setTimeout(r, 100));
   assert.equal((await fetch(`${baseUrl}/healthz`)).status, 200);
 });
+
+test('a newly learned duration reaches everyone including the reporter; position heartbeats do not echo to the owner', async () => {
+  const owner = await client();
+  const guest = await client();
+  await emit(owner, 'room:join', { roomId: 'beats', name: 'Owner' });
+  await emit(guest, 'room:join', { roomId: 'beats', name: 'Guest' });
+  const guestSawSource = once(guest, 'sync:state');
+  await emit(owner, 'sync:source', { type: 'stream', name: 'movie.mkv' });
+  await guestSawSource; // let the source broadcast land before listening for the duration
+
+  const ownerStates = [];
+  owner.on('sync:state', (s) => ownerStates.push(s));
+  const guestDuration = once(guest, 'sync:state');
+  const ownerDuration = new Promise((resolve) => owner.once('sync:state', resolve));
+  owner.emit('sync:heartbeat', { duration: 7200 });
+  const [g, o] = await Promise.all([guestDuration, ownerDuration]);
+  assert.equal(g.playback.source.duration, 7200);
+  assert.equal(o.playback.source.duration, 7200, 'the reporter learns it too');
+  assert.equal(o.action, 'DURATION');
+
+  // Ongoing position heartbeats go to the guest only.
+  ownerStates.length = 0;
+  const guestBeat = once(guest, 'sync:state');
+  owner.emit('sync:heartbeat', { time: 12, playing: true, duration: 7200 });
+  assert.equal((await guestBeat).action, 'HEARTBEAT');
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(ownerStates.length, 0, 'the owner is not sent its own position back');
+});
+
+test('the server listens on all IPv4 interfaces by default (needed on Render/Docker)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  assert.match(src, /process\.env\.HOST \|\| '0\.0\.0\.0'/);
+  assert.match(src, /httpServer\.listen\(port, host,/);
+});

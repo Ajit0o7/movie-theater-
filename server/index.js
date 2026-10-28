@@ -199,8 +199,18 @@ export function createCinemaServer({ env = process.env, tls = null } = {}) {
 
     on('sync:heartbeat', (beat) => {
       if (!room) return;
+      const hadDuration = Boolean(room.playback.source.duration);
       const playback = applyHeartbeat(room, socket.id, beat);
-      if (playback) socket.to(room.id).emit('sync:state', { playback, action: 'HEARTBEAT' });
+      if (!playback) return;
+      if (!hadDuration && playback.source.duration) {
+        // The duration was just learned: everyone needs it, including the reporter, whose own
+        // copy of the state would otherwise lack it. Only this one-off goes back to the sender.
+        io.to(room.id).emit('sync:state', { playback, action: 'DURATION' });
+      } else {
+        // Position heartbeats from a stream owner must not echo to the owner: their own
+        // player is the clock, and re-applying a slightly old snapshot would nudge it.
+        socket.to(room.id).emit('sync:state', { playback, action: 'HEARTBEAT' });
+      }
     });
 
     on('chat:send', ({ text }) => {
@@ -257,7 +267,10 @@ async function main() {
     else console.error(err);
     process.exit(1);
   });
-  httpServer.listen(port, () => {
+  // Containers (Render, Docker, ...) route to the instance over IPv4, so bind every IPv4
+  // interface explicitly rather than relying on the platform default. Override with HOST.
+  const host = process.env.HOST || '0.0.0.0';
+  httpServer.listen(port, host, () => {
     const scheme = https ? 'https' : 'http';
     console.log(`🎬 4K Virtual Cinema running at ${scheme}://localhost:${port}`);
     const lan = lanAddresses();
