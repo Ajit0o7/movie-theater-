@@ -656,6 +656,23 @@ input[type="range"]:not(.timeline-input) {
 }
 .hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.5; }
 
+/* ---------- Timeline moments ---------- */
+.timeline-moments { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.moment-dot {
+  --heat: 0.5;
+  position: absolute; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%;
+  background: hsl(calc(45 - var(--heat) * 45) 100% 62%);
+  opacity: calc(0.35 + var(--heat) * 0.65);
+  box-shadow: 0 0 calc(4px + var(--heat) * 8px) hsl(calc(45 - var(--heat) * 45) 100% 55%);
+}
+.moment-badge {
+  position: absolute; bottom: 18px; transform: translateX(-50%); pointer-events: auto;
+  padding: 2px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border-strong);
+  background: var(--surface-strong); font-size: 15px; line-height: 1.35; cursor: pointer;
+  box-shadow: 0 4px 14px -4px rgba(0, 0, 0, 0.8); transition: transform 160ms var(--ease);
+}
+.moment-badge:hover { transform: translateX(-50%) translateY(-2px) scale(1.15); }
+
 /* ---------- Subtitles ---------- */
 .subtitles {
   --sub-scale: 1; --sub-color: #fff; --sub-bg: 0.6; --sub-font: var(--font-body);

@@ -18,6 +18,7 @@ import {
 import { Reactions } from './reactions.js';
 import { MOVIE_JITTER_BUFFER_MS, PeerManager, meshBudget } from './rtc.js';
 import { DEFAULT_SUB_STYLE, setupSubtitles } from './subtitles-ui.js';
+import { TimelineMoments } from './moments.js';
 import { CinemaSync, ClockSync } from './sync.js';
 import { $, $$, formatTime, h, storage, toast } from './util.js';
 import { checkVideoLink } from './links.js';
@@ -133,6 +134,11 @@ function measureHud() {
 }
 measureHud();
 window.addEventListener('resize', measureHud);
+
+// Reactions stamped with the movie time, shown on the timeline; click a busy spot to jump.
+const moments = new TimelineMoments($('#timeline-moments'), {
+  onSeek: (t) => session?.sync.controllable && session.sync.seek(t),
+});
 
 const subtitles = setupSubtitles({
   getTime: viewerTime,
@@ -309,6 +315,7 @@ async function joinRoom() {
     toast(`${name}’s connection can’t keep up with this video, so it keeps buffering for them. A smaller file, or “Same file everywhere”, would help.`, { tone: 'warn', duration: 9000 });
   });
   on('subs:state', ({ subs, actor }) => subtitles.applyState(subs, { actor }));
+  on('reaction', ({ emoji, t }) => moments.add(t, emoji));
   on('cam:layout', ({ id, cam }) => {
     deck.get(id === session.selfId ? 'self' : id)?.applyLayout(cam, { remote: true });
   });
@@ -359,6 +366,7 @@ async function joinRoom() {
   chat.load(res.chat);
   sync.setInitialState(res.playback);
   subtitles.applyState(res.subtitles, { quiet: true });
+  moments.set(res.moments);
   renderPeople();
   return true;
 }
@@ -988,6 +996,7 @@ function onSyncState({ playback, prev, actor, actorId, action, sourceChanged, op
   if (sourceChanged) {
     renderSource();
     subtitles.onSourceChanged(playback.source);
+    if (prev) moments.clear(); // moments belong to the previous movie
   }
   if (optimistic || action === 'INIT' || action === 'HEARTBEAT' || action === 'DURATION' || actorId === session.selfId) return;
   const who = actor || 'Someone';
@@ -1030,6 +1039,7 @@ function renderHud() {
   const m = media();
   const playing = Boolean(sync.state?.playing);
   const live = sync.source.type === 'screen';
+  moments.setDuration(sync.controllable ? sync.duration() : 0);
 
   write('icon', playing || live ? '#i-pause' : '#i-play', (v) => $('#play-btn use').setAttribute('href', v));
   write('playing', playing || (live && !m.paused), (v) => document.body.classList.toggle('is-playing', v));
@@ -1079,6 +1089,10 @@ seek.addEventListener('change', () => {
 $('#timeline').addEventListener('pointermove', (e) => {
   const duration = session?.sync.duration() ?? 0;
   if (!duration) return;
+  if (e.target.closest('.moment-badge')) {
+    tooltip.hidden = true; // the badge has its own label
+    return;
+  }
   const rect = seek.getBoundingClientRect();
   const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
   tooltip.hidden = false;

@@ -13,6 +13,8 @@
   <!-- Fetch every module in parallel instead of discovering them import by import. -->
   <link rel="modulepreload" href="/js/room.js">
   <link rel="modulepreload" href="/js/subtitles.js">
+  <link rel="modulepreload" href="/js/subtitles-ui.js">
+  <link rel="modulepreload" href="/js/moments.js">
   <link rel="modulepreload" href="/js/util.js">
   <link rel="modulepreload" href="/js/rtc.js">
   <link rel="modulepreload" href="/js/codecs.js">
@@ -117,6 +119,7 @@
         <div class="timeline-fill" id="timeline-fill"></div>
         <div class="timeline-thumb" id="timeline-thumb"></div>
       </div>
+      <div class="timeline-moments" id="timeline-moments" aria-label="Reaction moments"></div>
       <div class="timeline-tooltip" id="timeline-tooltip" hidden>0:00</div>
       <input type="range" id="seek" class="timeline-input" min="0" max="1000" step="1" value="0" aria-label="Seek">
     </div>
