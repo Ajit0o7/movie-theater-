@@ -8,9 +8,15 @@ A zero-install watch-party web app, inspired by [Kosmi](https://app.kosmi.io/) b
 - **YouTube**: paste any YouTube link (`watch`, `youtu.be`, `shorts`, `live`, with `?t=` start times). Everyone plays it in sync through the official embedded player.
 - **Sharp on slow internet**: screen/tab capture and file streaming have quality presets: **Eco** 1080p at 2.5 Mbps (the default, works on 2–5 Mbps), **Cinema** 1440p at 5 Mbps, **Max** 4K at 10 Mbps, and **Smooth** 1080p60 for sports and games. The cinema presets never drop resolution. The most efficient codec the device can encode smoothly is chosen automatically (AV1 > VP9 > H.264). Viewers keep an 800 ms buffer that absorbs network hiccups, and movie audio is Opus stereo at 160 kbps.
 - **Separate audio paths**: movie audio is sent as Opus stereo at 160 kbps with echo cancellation, noise suppression and AGC turned **off**. Voice uses its own track with all of those **on**. The mixer has separate Movie and Voice volume sliders.
-- **Translucent chat drawer**: it slides over the movie instead of shrinking it, and messages that arrive while it's closed show up as toasts.
-- **Floating reactions**: 🍿 ❤️ 😂 👏 😱 🔥 😭 👀 drift up the screen for everyone.
-- **Ambilight**: the letterbox bars glow with colours sampled from the edges of the picture.
+- **Translucent chat drawer**: it slides over the movie instead of shrinking it, and messages that arrive while it's closed show up as toasts. Or turn on **floating chat** (`D`): new messages glide across the top of the movie in lanes, Niconico-style.
+- **Floating reactions**: 🍿 ❤️ 😂 👏 😱 🔥 😭 👀 drift up the screen for everyone. Each one is stamped with the movie time, and the timeline shows where the room reacted most; click a marker to jump to that moment.
+- **Shared subtitles**: drop an `.srt` or `.vtt` file anywhere on the screen and everyone gets it. Size, colour, font and background are each viewer's own, and so is a timing offset (`[` / `]`) for files that are slightly out of sync.
+- **Laser pointer**: hold `Alt` and move the mouse (or press `P` and drag) to draw a glowing trail over the movie that everyone sees. It lands on the same spot of the picture on every screen size.
+- **Spatial voices** (opt-in, for headphones): each friend's voice comes from where their camera tile sits on the screen.
+- **Ambilight**: the space around the picture glows with its colours. Black bars baked into the video file (a 2.39:1 film inside a 16:9 file) are detected, so the glow fills them too instead of sampling black.
+- **Touch gestures** on phones and tablets: tap for the controls, double-tap the left or right side to skip 10 s (keep tapping for more), swipe up/down for brightness (left) or volume (right), and pinch to fill the screen. Fill (`Z` on a computer) zooms past baked-in black bars.
+- **Pop-out** (`O`, Chrome and Edge): the movie, everyone's webcams and the controls move into an always-on-top window, so you can keep watching together while using other apps.
+- **Phone remote and webcam**: scan a QR code (the phone button) and your phone becomes a remote for your screen: play, pause, skip, scrub, volume and reactions. Tap *Start camera* on it and it becomes your webcam in the room. Nothing to install.
 
 ## Quick start
 
@@ -112,6 +118,7 @@ Some limits come from browsers or networks and can't be removed by a web app. Th
 | A pasted link doesn't play | An `http://` link on an `https://` site, a share page instead of a file, or a host without seeking support | Refuses `http://` on `https://` with the https version suggested, converts Dropbox share links, explains Google Drive/OneDrive/MEGA, and warns when seeking won't work. |
 | A viewer's internet is slower than the video (for example 0.7 Mbps for a 1.1 Mbps file) | It can't download fast enough to play in real time; no sync trick changes that | Detects it after about 20 s of watching (30% or more of the time spent buffering), stops wasting downloaded video on frequent jumps (one catch-up every 20 s instead of every 4 s), and tells that viewer and the rest of the room why. In a test this cut buffering time by about a third. A smaller file, or *Same file everywhere*, is the real fix. |
 | A Bluetooth headset dies mid-call | The mic track ends | Switches to the system's default mic (or turns the mic off) and says so. |
+| The phone's camera won't start from the QR code | Phones only allow the camera on `https://` addresses, and a computer's LAN IP over `http://` isn't one | The pairing panel says so; run `npm run start:https` and scan again. The phone remote works over plain `http://`. A computer opened on `localhost` gets a QR code with its LAN address, since a phone can't open the computer's `localhost`. |
 
 ## Keyboard shortcuts
 
@@ -124,6 +131,12 @@ Some limits come from browsers or networks and can't be removed by a web app. Th
 | `M` / `V` | Mic / camera |
 | `R`, `1`–`8` | Reaction tray / send reaction |
 | `I` | Stream stats (resolution, fps, bitrate, sync drift) |
+| `S` | Show/hide subtitles (or open the subtitles panel) |
+| `[` `]` | Subtitles 0.25 s earlier / later (just for you) |
+| `P`, or hold `Alt` | Laser pointer |
+| `Z` | Fill the screen / fit the whole picture |
+| `D` | Floating chat |
+| `O` | Pop out (always-on-top window) |
 
 Double-click a camera to change its size. Double-click the movie to go fullscreen.
 
@@ -132,10 +145,14 @@ Double-click a camera to change its size. Double-click the movie to go fullscree
 ```
 server/
   index.js     Express + Socket.io: static files, room API, signaling relay, sync, chat
-  rooms.js     Pure room state (playback clock, participants, chat), unit-tested
+  rooms.js     Pure room state (playback clock, participants, chat, subtitles), unit-tested
+  remote.js    Phone pairing: tokens, command validation, expiry
+  ice.js       STUN/TURN configuration (Cloudflare, credentials URL or fixed)
+  tls.js       Self-signed certificate for `--https` on a LAN
 public/
   index.html   Landing page
   room.html    Theater
+  remote.html  Phone remote (opened from the QR code)
   js/room.js       Page controller: wires everything together
   js/rtc.js        Mesh WebRTC: perfect negotiation, 4 fixed media slots, bitrate & Opus stereo
   js/sync.js       Two-way sync engine + NTP-style clock offset
@@ -144,7 +161,17 @@ public/
   js/reactions.js  Floating emoji particles
   js/codecs.js     Picks AV1/VP9/H.264 from what the device encodes smoothly (unit-tested policy)
   js/youtube.js    YouTube link parsing + IFrame API adapter that looks like a <video> to sync
-  js/ambilight.js  Glow from a tiny stretched canvas (no pixel readback, no blur filter)
+  js/ambilight.js  Glow from a tiny stretched canvas, plus detection of black bars baked into the file
+  js/geometry.js   Where the picture is on screen: fit, or fill past the bars
+  js/gestures.js   Touch gestures (tap, double-tap skip, swipes, pinch)
+  js/subtitles.js  SRT/VTT parsing and the overlay; subtitles-ui.js is the panel
+  js/moments.js    Reaction heat map and markers on the timeline
+  js/laser.js      Shared laser pointer in picture coordinates
+  js/spatial.js    Voices panned toward their camera tiles
+  js/danmaku.js    Floating chat lanes
+  js/pip.js        Pop-out window (Document Picture-in-Picture)
+  js/phone-link.js The computer's side of a phone pairing (commands, state, phone camera)
+  js/remote.js     The phone remote page
   js/media.js      Capture constraints (4K display, voice vs. movie audio)
 ```
 

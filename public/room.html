@@ -30,6 +30,7 @@
   <link rel="modulepreload" href="/js/gestures.js">
   <link rel="modulepreload" href="/js/danmaku.js">
   <link rel="modulepreload" href="/js/pip.js">
+  <link rel="modulepreload" href="/js/phone-link.js">
   <link rel="modulepreload" href="/js/links.js">
   <link rel="modulepreload" href="/js/youtube.js">
 </head>
@@ -67,6 +68,7 @@
       <symbol id="i-ffwd" viewBox="0 0 24 24"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></symbol>
       <symbol id="i-float" viewBox="0 0 24 24"><path d="M9 6h12M3 12h13M11 18h10"/><path d="M5 4.5 3 6l2 1.5M7 16.5 5 18l2 1.5" stroke-width="1.6"/></symbol>
       <symbol id="i-pip" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12.5" y="11.5" width="6" height="5" rx="1" fill="currentColor"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
     </defs>
   </svg>
@@ -173,7 +175,8 @@
         <button class="hud-btn" data-action="open-subs" id="subs-btn" title="Subtitles (S)"><svg class="icon"><use href="#i-cc"/></svg></button>
         <button class="hud-btn" data-action="open-mixer" title="Sound mixer"><svg class="icon"><use href="#i-sliders"/></svg></button>
         <button class="hud-btn" data-action="toggle-chat" id="chat-btn" title="Chat (C)"><svg class="icon"><use href="#i-chat"/></svg><span class="badge" id="chat-badge" hidden>0</span></button>
-        <button class="hud-btn" data-action="toggle-pip" id="pip-btn" title="Pop out: keep watching on top of other apps (O)"><svg class="icon"><use href="#i-pip"/></svg></button>
+        <button class="hud-btn desktop-only" data-action="open-phone" id="phone-btn" title="Phone remote &amp; webcam: scan a QR code"><svg class="icon"><use href="#i-phone"/></svg></button>
+        <button class="hud-btn desktop-only" data-action="toggle-pip" id="pip-btn" title="Pop out: keep watching on top of other apps (O)"><svg class="icon"><use href="#i-pip"/></svg></button>
         <button class="hud-btn" data-action="toggle-fullscreen" id="fs-btn" title="Fullscreen (F)"><svg class="icon"><use href="#i-expand"/></svg></button>
       </div>
     </div>
@@ -285,6 +288,31 @@
       <p class="hint" id="volume-locked-note" hidden>On iPhone and iPad, the side buttons set the loudness; these sliders can only mute (drag to 0).</p>
       <p class="hint">On a phone or tablet: double-tap the left or right side to skip 10 s (keep tapping for more), swipe up or down on the left for brightness and on the right for volume, and pinch to fill the screen.</p>
       <p class="hint">Movie audio is sent as clean stereo with echo cancellation and noise suppression turned off. Voice chat has those filters on.</p>
+    </div>
+  </dialog>
+
+  <!-- Phone remote & webcam -->
+  <dialog id="phone-dialog" class="dialog">
+    <div class="dialog-body">
+      <div class="dialog-head">
+        <h2>Use your phone</h2>
+        <button class="icon-btn" data-action="close-dialog" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="phone-pair">
+        <div class="phone-qr" id="phone-qr" role="img" aria-label="QR code for your phone"></div>
+        <div class="phone-steps">
+          <p>Scan the code with your phone’s camera. Nothing to install.</p>
+          <p><strong>Remote:</strong> play, pause, skip, scrub, this screen’s volume and reactions, from the sofa.</p>
+          <p><strong>Webcam:</strong> tap “Start camera” on the phone and it becomes your camera in the room.</p>
+          <p class="phone-status" id="phone-status">Waiting for your phone…</p>
+        </div>
+      </div>
+      <div class="phone-url-row">
+        <input id="phone-url" readonly aria-label="Link for your phone">
+        <button class="btn btn-ghost btn-sm" data-action="copy-phone-url">Copy</button>
+      </div>
+      <p class="hint" id="phone-https-note" hidden>For the phone’s camera, start the server with “npm run start:https” and scan again: phones only allow the camera on secure (https://) addresses. The remote works either way.</p>
+      <button class="btn btn-ghost btn-sm phone-unpair" data-action="unpair-phones" id="phone-unpair" hidden>Disconnect phones</button>
     </div>
   </dialog>
 

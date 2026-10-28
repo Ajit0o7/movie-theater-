@@ -790,6 +790,7 @@ body.idle .subtitles { bottom: 6vh; }
   .time { font-size: 12px; }
   .now-playing { display: none; }
   .topbar-actions { margin-left: auto; }
+  .hud-btn.desktop-only { display: none; } /* phone pairing and pop-out are for computers */
   .cam-tile.size-m { --w: 150px; }
   .cam-tile.size-l { --w: 220px; }
   .reaction-tray { flex-wrap: wrap; width: 200px; justify-content: center; }
@@ -798,6 +799,81 @@ body.idle .subtitles { bottom: 6vh; }
   .segmented { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-body { padding: 22px 18px; }
 }
+
+/* ---------- Phone pairing (computer side) ---------- */
+#phone-btn.on { color: var(--success); background: rgba(16, 185, 129, 0.14); }
+.phone-pair { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: center; }
+.phone-qr {
+  display: grid; place-items: center; width: 200px; aspect-ratio: 1; padding: 10px; border-radius: var(--radius);
+  background: #fff; color: #333; font-size: 13px; text-align: center;
+}
+.phone-qr svg { width: 100%; height: 100%; display: block; }
+.phone-qr-wait { padding: 12px; }
+.phone-steps p { margin: 0 0 10px; font-size: 14px; line-height: 1.5; color: var(--text-dim); }
+.phone-steps strong { color: var(--text); }
+.phone-status { font-weight: 600; color: var(--text-dim) !important; }
+.phone-status::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--warn); vertical-align: 1px; }
+.phone-status.on { color: var(--success) !important; }
+.phone-status.on::before { background: var(--success); }
+.phone-url-row { display: flex; gap: 8px; }
+.phone-url-row input {
+  flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35); color: var(--text-dim); font: 500 12px var(--font-body);
+}
+.phone-unpair { justify-self: start; }
+@media (max-width: 640px) {
+  .phone-pair { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+}
+
+/* ---------- Phone remote page ---------- */
+.remote-page { min-height: 100dvh; background: var(--bg-gradient); }
+.remote {
+  display: grid; gap: 16px; max-width: 480px; margin: 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+.remote-head { display: flex; align-items: center; justify-content: space-between; }
+.remote-head .brand { font-family: var(--font-display); font-weight: 800; font-size: 18px; }
+.remote-link { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.remote-link .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.remote-link[data-tone="on"] .dot { background: var(--success); box-shadow: 0 0 10px var(--success-glow); }
+.remote-link[data-tone="off"] .dot { background: var(--danger); }
+.remote-card {
+  display: grid; gap: 16px; padding: 20px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.remote-card h1 { margin: -8px 0 0; font: 800 22px/1.25 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.remote-card h2 { margin: 0 0 6px; font: 700 18px var(--font-display); }
+.remote-card .eyebrow { margin: 0; }
+.remote-card .hint { margin: 0; }
+.remote-scrub input { width: 100%; accent-color: var(--accent); }
+.remote-times { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.remote-transport { display: flex; align-items: center; justify-content: center; gap: 22px; }
+.remote-btn {
+  display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface-glass); color: var(--text); cursor: pointer; touch-action: manipulation;
+}
+.remote-btn .icon { width: 28px; height: 28px; }
+.remote-play { width: 88px; height: 88px; background: var(--accent); border: 0; box-shadow: 0 10px 30px -8px var(--accent-glow); }
+.remote-play .icon { width: 36px; height: 36px; }
+.remote-btn:active { transform: scale(0.94); }
+.remote-btn:disabled, .remote-reaction:disabled { opacity: 0.35; }
+.remote-volume .icon { width: 18px; height: 18px; vertical-align: -4px; margin-right: 4px; }
+.remote-volume input { width: 100%; accent-color: var(--accent-2); }
+.remote-reactions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.remote-reaction {
+  height: 56px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface-glass);
+  font-size: 26px; cursor: pointer; touch-action: manipulation;
+}
+.remote-cam-preview { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; aspect-ratio: 4 / 3; }
+.remote-cam-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.remote-cam-preview video.mirrored { transform: scaleX(-1); }
+.remote-cam-live {
+  position: absolute; left: 10px; top: 10px; padding: 4px 10px; border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.6); font-size: 12px; font-weight: 700;
+}
+.remote-cam-live.live { color: #fff; background: var(--danger); }
+.remote-cam-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.remote-cam-actions .btn .icon { width: 18px; height: 18px; }
 
 @media (prefers-reduced-motion: reduce) {
   .floater, .floater-emoji, .landing-glow { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }

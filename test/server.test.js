@@ -125,7 +125,8 @@ test('rejects invalid room ids', async () => {
 
 test('malformed client messages never crash the server', async () => {
   const s = await client();
-  const events = ['room:join', 'signal', 'media:announce', 'peer:status', 'sync:source', 'sync:event', 'sync:heartbeat', 'chat:send', 'reaction', 'time:ping'];
+  const events = ['room:join', 'signal', 'media:announce', 'peer:status', 'sync:source', 'sync:event', 'sync:heartbeat', 'chat:send', 'reaction', 'time:ping',
+    'remote:pair', 'remote:join', 'remote:command', 'remote:signal', 'remote:state', 'remote:unpair'];
   for (const event of events) {
     for (const payload of [null, undefined, 42, 'x', [], { roomId: 7 }]) s.emit(event, payload);
     s.emit(event, null, 5); // non-function "ack"
@@ -296,4 +297,77 @@ test('subtitles reach everyone and late joiners; reactions carry the movie time'
   const cleared = once(late, 'subs:state');
   b.emit('subs:clear');
   assert.equal((await cleared).subs, null);
+});
+
+test('a paired phone remote-controls its own computer only, and outlives that computer reloading', async () => {
+  const pc = await client();
+  const friend = await client();
+  await emit(pc, 'room:join', { roomId: 'phonenight', name: 'Ajit', clientId: 'tab-phone-1' });
+  await emit(friend, 'room:join', { roomId: 'phonenight', name: 'Friend', clientId: 'tab-phone-2' });
+
+  // The computer gets a link for the phone and its QR code; on localhost it points at the LAN.
+  const pair = await emit(pc, 'remote:pair', { origin: 'https://cinema.example.com' });
+  assert.match(pair.url, /^https:\/\/cinema\.example\.com\/remote\/phonenight\?pair=[\w-]{22}$/);
+  assert.match(pair.qr, /^<svg[^>]*viewBox/);
+  assert.equal((await emit(pc, 'remote:pair', { origin: 'https://cinema.example.com' })).url, pair.url, 'reopening shows the same code');
+  const token = new URL(pair.url).searchParams.get('pair');
+  const page = await fetch(`${baseUrl}/remote/phonenight?pair=${token}`);
+  assert.match(await page.text(), /id="remote"/);
+
+  assert.match((await emit(await client(), 'remote:join', { token: 'nope' })).error, /expired/);
+  const phone = await client();
+  const status = once(pc, 'remote:status');
+  const joined = await emit(phone, 'remote:join', { token });
+  assert.deepEqual(joined, { ok: true, roomId: 'phonenight', name: 'Ajit', online: true });
+  assert.equal((await status).phones, 1);
+
+  // Commands reach the paired computer (validated), and nobody else; the phone is not a participant.
+  let friendHeard = false;
+  friend.on('remote:command', () => (friendHeard = true));
+  const command = once(pc, 'remote:command');
+  phone.emit('remote:command', { cmd: 'seekBy', value: 'lots' }); // invalid: dropped
+  phone.emit('remote:command', { cmd: 'rm -rf' });
+  phone.emit('remote:command', { cmd: 'seekBy', value: 10 });
+  assert.deepEqual(await command, { cmd: 'seekBy', value: 10, from: phone.id });
+  const reaction = once(pc, 'remote:command');
+  phone.emit('remote:command', { cmd: 'reaction', value: '🔥' });
+  assert.equal((await reaction).value, '🔥');
+  // The computer's state reaches its phone; camera signaling flows both ways between just them.
+  const state = once(phone, 'remote:state');
+  pc.emit('remote:state', { playing: true, time: 12, title: 'Film' });
+  assert.deepEqual(await state, { playing: true, time: 12, title: 'Film' });
+  const offer = once(pc, 'remote:signal');
+  phone.emit('remote:signal', { data: { description: { type: 'offer', sdp: 'o' } } });
+  assert.deepEqual(await offer, { from: phone.id, data: { description: { type: 'offer', sdp: 'o' } } });
+  const answer = once(phone, 'remote:signal');
+  pc.emit('remote:signal', { to: phone.id, data: { description: { type: 'answer', sdp: 'a' } } });
+  assert.deepEqual(await answer, { data: { description: { type: 'answer', sdp: 'a' } } });
+  friend.emit('remote:signal', { to: phone.id, data: { evil: true } }); // not their phone
+  friend.emit('remote:state', { evil: true });
+  assert.match((await emit(phone, 'room:join', { roomId: 'phonenight', name: 'Sneaky' })).error, /Already/, 'a phone never becomes a participant');
+  const roster = await emit(await client(), 'room:join', { roomId: 'phonenight', name: 'Late' });
+  assert.deepEqual(roster.peers.map((p) => p.name).sort(), ['Ajit', 'Friend'], 'the phone is not in the room');
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(friendHeard, false);
+
+  // The computer reloads: the phone waits, then carries on with the same pairing.
+  const away = once(phone, 'remote:owner');
+  pc.emit('room:leave');
+  pc.disconnect();
+  assert.deepEqual(await away, { online: false, name: 'Ajit' });
+  const back = once(phone, 'remote:owner');
+  const reloaded = await client();
+  const statusAgain = once(reloaded, 'remote:status');
+  await emit(reloaded, 'room:join', { roomId: 'phonenight', name: 'Ajit', clientId: 'tab-phone-1' });
+  assert.deepEqual(await back, { online: true, name: 'Ajit' });
+  assert.equal((await statusAgain).phones, 1);
+  const again = once(reloaded, 'remote:command');
+  phone.emit('remote:command', { cmd: 'toggle' });
+  assert.deepEqual(await again, { cmd: 'toggle', from: phone.id });
+
+  // Unpairing ends it: the phone is told and disconnected, and the code stops working.
+  const ended = once(phone, 'remote:ended');
+  reloaded.emit('remote:unpair');
+  await ended;
+  assert.match((await emit(await client(), 'remote:join', { token })).error, /expired/);
 });

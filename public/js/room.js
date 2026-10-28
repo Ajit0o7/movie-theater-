@@ -17,7 +17,8 @@ import {
   getMicTrack,
   resolutionLabel,
 } from './media.js';
-import { Reactions } from './reactions.js';
+import { REACTIONS, Reactions } from './reactions.js';
+import { PhoneLink } from './phone-link.js';
 import { MOVIE_JITTER_BUFFER_MS, PeerManager, meshBudget } from './rtc.js';
 import { DEFAULT_SUB_STYLE, setupSubtitles } from './subtitles-ui.js';
 import { TimelineMoments } from './moments.js';
@@ -334,6 +335,7 @@ async function joinRoom() {
   session = { selfId, self: { id: selfId, name: local.name }, rtc, sync, chat, reactions, peers: new Map(), remoteStreams: new Map(), handlers: [] };
 
   rtc.addEventListener('track', ({ detail }) => onRemoteTrack(detail));
+  phoneLink.bind(socket, on);
   rtc.addEventListener('state', ({ detail: { peerId, state } }) => {
     if (state !== 'failed') return;
     const name = session?.peers.get(peerId)?.name ?? 'someone';
@@ -566,6 +568,11 @@ async function startCamera({ quiet = false } = {}) {
 }
 
 async function disableCamera() {
+  if (phoneCamera) {
+    phoneLink.stopCamera(phoneCamera); // and the phone hears it
+    phoneCamera = null;
+    setSelfMirror(true);
+  }
   local.camTrack?.stop();
   local.camTrack = null;
   await session?.rtc.setTrack('camVideo', null);
@@ -1225,6 +1232,109 @@ async function togglePopOut() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phone: scan a QR code and the phone becomes a remote for this screen, and optionally this
+// person's webcam. Its commands run through this tab's own controls.
+
+let phoneCamera = null; // the paired phone whose camera is ours right now
+
+const phoneLink = new PhoneLink({
+  run: runPhoneCommand,
+  getState: phoneState,
+  getIceServers: () => iceServers,
+  onCamera: usePhoneCamera,
+  onCameraEnd: endPhoneCamera,
+  onCameraFacing: (facing) => setSelfMirror(facing === 'user'),
+  onPhones: (phones, change) => {
+    $('#phone-btn').classList.toggle('on', phones > 0);
+    renderPhoneStatus();
+    if (change === 'joined') toast('Phone connected: it’s a remote for this screen now.', { tone: 'success' });
+    if (change === 'left') toast('Phone disconnected.');
+  },
+});
+
+function phoneState() {
+  const sync = session?.sync;
+  const type = sync?.source.type ?? 'none';
+  return {
+    title: type === 'none' ? '' : $('#now-playing').textContent || 'Now playing',
+    type,
+    playing: type === 'screen' ? !player.paused : Boolean(sync?.state?.playing),
+    time: sync && type !== 'none' ? Math.round(sync.localTime() * 10) / 10 : 0,
+    duration: sync?.controllable ? Math.round(sync.duration() * 10) / 10 : 0,
+    controllable: Boolean(sync?.controllable),
+    volume: settings.movieVolume,
+    reactions: REACTIONS,
+  };
+}
+
+function runPhoneCommand(cmd, value) {
+  const sync = session?.sync;
+  if (!sync) return;
+  if (cmd === 'toggle' && sync.controllable) sync.toggle();
+  else if (cmd === 'seekBy' && sync.controllable) sync.seekBy(value);
+  else if (cmd === 'seek' && sync.controllable) sync.seek(value);
+  else if (cmd === 'reaction') session.reactions.send(value);
+  else if (cmd === 'volume') {
+    settings.movieVolume = value;
+    movieVol.value = String(Math.round(value * 100));
+    applySettings();
+  }
+}
+
+const setSelfMirror = (on) => deck.get('self')?.video.classList.toggle('mirrored', on);
+
+async function usePhoneCamera(track, facing, phoneId) {
+  if (phoneCamera && phoneCamera !== phoneId) phoneLink.stopCamera(phoneCamera); // one phone at a time
+  else if (!phoneCamera) local.camTrack?.stop(); // the laptop camera hands over
+  phoneCamera = phoneId;
+  local.camTrack = track;
+  setSelfMirror(facing === 'user'); // a selfie is mirrored for you; the back camera isn't
+  await session?.rtc.setTrack('camVideo', track);
+  refreshSelfTile();
+  publishStatus();
+  renderPhoneStatus();
+  toast('Your phone is your camera now.', { tone: 'success' });
+}
+
+async function endPhoneCamera(phoneId) {
+  if (phoneCamera !== phoneId) return;
+  phoneCamera = null;
+  local.camTrack = null;
+  setSelfMirror(true);
+  await session?.rtc.setTrack('camVideo', null);
+  refreshSelfTile();
+  publishStatus();
+  renderPhoneStatus();
+  toast('Phone camera stopped.');
+}
+
+function renderPhoneStatus() {
+  const n = phoneLink.phones;
+  $('#phone-status').textContent = n
+    ? `${n === 1 ? 'Phone' : `${n} phones`} connected${phoneCamera ? ' · its camera is live' : ''}`
+    : 'Waiting for your phone…';
+  $('#phone-status').classList.toggle('on', n > 0);
+  $('#phone-unpair').hidden = !n;
+}
+
+async function openPhoneDialog() {
+  $('#phone-dialog').showModal();
+  $('#phone-qr').replaceChildren(h('span', { class: 'phone-qr-wait', text: 'Making a code…' }));
+  renderPhoneStatus();
+  const res = await phoneLink.pair();
+  if (res.error) {
+    $('#phone-qr').replaceChildren(h('span', { class: 'phone-qr-wait', text: res.error }));
+    return;
+  }
+  phoneLink.phones = res.phones;
+  renderPhoneStatus();
+  $('#phone-qr').innerHTML = res.qr; // an SVG made by the server's QR encoder
+  $('#phone-url').value = res.url;
+  // Phones only allow the camera on https:// (a LAN IP over plain http is "insecure").
+  $('#phone-https-note').hidden = !res.url.startsWith('http://');
+}
+
 function toggleFullscreen() {
   if (document.fullscreenElement) return document.exitFullscreen();
   // Fullscreen the whole app (not just <video>) so cameras, chat and reactions stay visible.
@@ -1398,6 +1508,20 @@ const actions = {
   'toggle-cam': toggleCam,
   'open-source': () => sourceDialog.showModal(),
   'open-mixer': () => $('#mixer-dialog').showModal(),
+  'open-phone': openPhoneDialog,
+  'copy-phone-url': async () => {
+    try {
+      await navigator.clipboard.writeText($('#phone-url').value);
+      toast('Link copied', { tone: 'success' });
+    } catch {
+      $('#phone-url').select();
+    }
+  },
+  'unpair-phones': () => {
+    phoneLink.unpair();
+    $('#phone-dialog').close();
+    toast('Phones disconnected. Open the phone panel again for a new code.');
+  },
   'close-dialog': (btn) => btn.closest('dialog')?.close(),
   'share-screen': shareScreen,
   'stop-source': () => setSource({ type: 'none' }),
