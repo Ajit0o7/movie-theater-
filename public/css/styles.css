@@ -569,6 +569,7 @@ body.idle .cam-tools { opacity: 0 !important; }
   user-select: text; -webkit-user-select: text;
 }
 .drawer.open { transform: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 10px; }
 .drawer-head h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text); }
 .drawer-head .danmaku-btn { margin-left: auto; margin-right: 4px; }
 .danmaku-btn.on { background: var(--accent); color: #fff; }
