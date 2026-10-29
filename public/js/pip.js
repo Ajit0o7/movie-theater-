@@ -23,12 +23,12 @@ export function popOutSize(hasCams, screenW = 1920) {
 const CSS = `
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #000; color: #f8fafc; overflow: hidden;
+  html, body { margin: 0; height: 100%; background: #000; color: #FAF2EC; overflow: hidden;
     font: 500 13px/1.2 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; user-select: none; }
   .pip { display: flex; flex-direction: column; height: 100%; }
   .pip-stage { position: relative; flex: 1; min-height: 0; background: #000; }
   .pip-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: none !important; }
-  .pip-cams { display: flex; gap: 6px; height: ${CAMS_H}px; padding: 6px 8px; overflow-x: auto; background: #0b0b10; }
+  .pip-cams { display: flex; gap: 6px; height: ${CAMS_H}px; padding: 6px 8px; overflow-x: auto; background: #141c1e; }
   .pip-cams:empty { display: none; }
   .pip-cam { position: relative; flex: none; height: 100%; aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden;
     background: hsl(var(--hue) 35% 18%); border: 1px solid rgba(255,255,255,.12); }
@@ -38,15 +38,15 @@ const CSS = `
     padding: 1px 5px; border-radius: 6px; background: rgba(0,0,0,.55); max-width: calc(100% - 8px);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pip-bar { display: flex; align-items: center; gap: 6px; height: ${BAR_H}px; padding: 0 8px;
-    background: rgba(20, 20, 30, 0.96); border-top: 1px solid rgba(255,255,255,.08); }
+    background: rgba(33, 44, 47, 0.97); border-top: 1px solid rgba(236,172,142,.12); }
   .pip-bar button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px;
     background: transparent; color: inherit; cursor: pointer; }
   .pip-bar button:hover { background: rgba(255,255,255,.08); }
-  .pip-bar button.play { background: #8b5cf6; }
+  .pip-bar button.play { background: linear-gradient(135deg, #D06F4C, #B6433E); }
   .pip-bar button:disabled { opacity: .35; cursor: default; }
   .pip-bar svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  .pip-time { font-variant-numeric: tabular-nums; color: #94a3b8; white-space: nowrap; }
-  .pip-seek { flex: 1; min-width: 40px; accent-color: #8b5cf6; }
+  .pip-time { font-variant-numeric: tabular-nums; color: #D1C0B5; white-space: nowrap; }
+  .pip-seek { flex: 1; min-width: 40px; accent-color: #D06F4C; }
 `;
 
 export class PopOut {

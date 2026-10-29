@@ -173,7 +173,7 @@
       </div>
       <div class="hud-group hud-right">
         <button class="hud-btn" data-action="open-subs" id="subs-btn" title="Subtitles (S)"><svg class="icon"><use href="#i-cc"/></svg></button>
-        <button class="hud-btn" data-action="open-mixer" title="Sound mixer"><svg class="icon"><use href="#i-sliders"/></svg></button>
+        <button class="hud-btn" data-action="open-mixer" title="Sound &amp; picture"><svg class="icon"><use href="#i-sliders"/></svg></button>
         <button class="hud-btn" data-action="toggle-chat" id="chat-btn" title="Chat (C)"><svg class="icon"><use href="#i-chat"/></svg><span class="badge" id="chat-badge" hidden>0</span></button>
         <button class="hud-btn desktop-only" data-action="open-phone" id="phone-btn" title="Phone remote &amp; webcam: scan a QR code"><svg class="icon"><use href="#i-phone"/></svg></button>
         <button class="hud-btn desktop-only" data-action="toggle-pip" id="pip-btn" title="Pop out: keep watching on top of other apps (O)"><svg class="icon"><use href="#i-pip"/></svg></button>
@@ -273,21 +273,33 @@
         <h2>Sound &amp; picture</h2>
         <button class="icon-btn" data-action="close-dialog" title="Close"><svg class="icon"><use href="#i-x"/></svg></button>
       </div>
-      <label class="slider-field">
-        <span>Movie <output id="movie-vol-out">100%</output></span>
-        <input type="range" id="movie-vol" min="0" max="100" value="100">
-      </label>
-      <label class="slider-field">
-        <span>Voices <output id="voice-vol-out">100%</output></span>
-        <input type="range" id="voice-vol" min="0" max="100" value="100">
-      </label>
-      <label class="toggle"><input type="checkbox" id="ambilight-toggle" checked><span>Ambilight glow</span></label>
-      <label class="toggle"><input type="checkbox" id="fill-toggle"><span>Fill the screen <small class="toggle-note">crops the edges · Z or pinch</small></span></label>
-      <label class="toggle"><input type="checkbox" id="spatial-toggle"><span>Spatial voices <small class="toggle-note">best with headphones</small></span></label>
-      <p class="hint">Spatial voices: each friend sounds from where their camera tile is on screen. Drag a tile left and their voice moves left. On speakers, some browsers can't cancel the echo, so use headphones.</p>
-      <p class="hint" id="volume-locked-note" hidden>On iPhone and iPad, the side buttons set the loudness; these sliders can only mute (drag to 0).</p>
-      <p class="hint">On a phone or tablet: double-tap the left or right side to skip 10 s (keep tapping for more), swipe up or down on the left for brightness and on the right for volume, and pinch to fill the screen.</p>
-      <p class="hint">Movie audio is sent as clean stereo with echo cancellation and noise suppression turned off. Voice chat has those filters on.</p>
+      <section class="mixer-section" aria-label="Sound">
+        <h3 class="section-label">Sound</h3>
+        <label class="slider-field">
+          <span>Movie <output id="movie-vol-out">100%</output></span>
+          <input type="range" id="movie-vol" min="0" max="100" value="100">
+        </label>
+        <label class="slider-field">
+          <span>Voices <output id="voice-vol-out">100%</output></span>
+          <input type="range" id="voice-vol" min="0" max="100" value="100">
+        </label>
+        <label class="toggle"><input type="checkbox" id="spatial-toggle"><span>Spatial voices <small class="toggle-note">best with headphones</small></span></label>
+        <p class="hint">Each friend sounds from where their camera tile is: drag a tile left and their voice moves left.</p>
+        <p class="hint" id="volume-locked-note" hidden>On iPhone and iPad, the side buttons set the loudness; these sliders can only mute (drag to 0).</p>
+      </section>
+      <section class="mixer-section" aria-label="Picture">
+        <h3 class="section-label">Picture</h3>
+        <label class="toggle"><input type="checkbox" id="ambilight-toggle" checked><span>Ambilight glow</span></label>
+        <label class="toggle"><input type="checkbox" id="fill-toggle"><span>Fill the screen <small class="toggle-note">crops the edges · Z or pinch</small></span></label>
+      </section>
+      <details class="tips">
+        <summary>Tips</summary>
+        <ul>
+          <li>On a phone or tablet: double-tap the left or right side to skip 10 s (keep tapping for more), swipe up or down on the left for brightness and on the right for volume, and pinch to fill the screen.</li>
+          <li>Spatial voices can echo on speakers in some browsers, so use headphones.</li>
+          <li>Movie audio is sent as clean stereo with echo cancellation and noise suppression off; voice chat has them on.</li>
+        </ul>
+      </details>
     </div>
   </dialog>
 
