@@ -23,6 +23,7 @@
       <symbol id="i-cam" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="m15.5 10.5 6-3.5v10l-6-3.5"/></symbol>
       <symbol id="i-flip" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.7M20 4v4.7h-4.7M20 12a8 8 0 0 1-13.7 5.6L4 15.3M4 20v-4.7h4.7"/></symbol>
       <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
     </defs>
   </svg>
 
@@ -54,6 +55,19 @@
         <input type="range" id="remote-vol" min="0" max="100" value="100">
       </label>
       <div class="remote-reactions" id="remote-reactions" aria-label="Reactions"></div>
+    </section>
+
+    <section class="remote-card" id="remote-chat" hidden>
+      <div class="remote-chat-head">
+        <h2>Chat</h2>
+        <span class="hint" id="remote-chat-as"></span>
+      </div>
+      <ol class="remote-messages" id="remote-messages" aria-live="polite"></ol>
+      <form class="remote-composer" id="remote-composer" autocomplete="off">
+        <input id="remote-chat-input" maxlength="1000" placeholder="Say something…" aria-label="Message" enterkeyhint="send">
+        <button class="remote-send" type="submit" aria-label="Send"><svg class="icon"><use href="#i-send"/></svg></button>
+      </form>
+      <p class="remote-chat-error" id="remote-chat-error" role="alert" hidden></p>
     </section>
 
     <section class="remote-card" id="remote-camera" hidden>

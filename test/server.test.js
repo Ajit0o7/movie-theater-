@@ -318,7 +318,7 @@ test('a paired phone remote-controls its own computer only, and outlives that co
   const phone = await client();
   const status = once(pc, 'remote:status');
   const joined = await emit(phone, 'remote:join', { token });
-  assert.deepEqual(joined, { ok: true, roomId: 'phonenight', name: 'Ajit', online: true });
+  assert.deepEqual(joined, { ok: true, roomId: 'phonenight', name: 'Ajit', online: true, chat: [] });
   assert.equal((await status).phones, 1);
 
   // Commands reach the paired computer (validated), and nobody else; the phone is not a participant.
@@ -349,6 +349,27 @@ test('a paired phone remote-controls its own computer only, and outlives that co
   assert.deepEqual(roster.peers.map((p) => p.name).sort(), ['Ajit', 'Friend'], 'the phone is not in the room');
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(friendHeard, false);
+
+  // Chat: the phone reads the room's messages and posts as Ajit; everyone sees it.
+  const friendMsg = once(phone, 'remote:chat');
+  friend.emit('chat:send', { text: 'popcorn ready?' });
+  assert.deepEqual((({ name, text, mine }) => ({ name, text, mine }))(await friendMsg), { name: 'Friend', text: 'popcorn ready?', mine: false });
+  const inRoom = once(friend, 'chat:message');
+  const echo = once(phone, 'remote:chat');
+  assert.deepEqual(await emit(phone, 'remote:chat', { text: '  yes, from my phone  ' }), { ok: true });
+  const posted = await inRoom;
+  assert.equal(posted.name, 'Ajit');
+  assert.equal(posted.text, 'yes, from my phone');
+  assert.equal(posted.authorId, pc.id);
+  assert.equal((await echo).mine, true);
+  assert.match((await emit(phone, 'remote:chat', { text: '   ' })).error, /Type/);
+  assert.match((await emit(friend, 'remote:chat', { text: 'x' })).error, /Not paired/);
+  const secondPhone = await client();
+  const rejoined = await emit(secondPhone, 'remote:join', { token });
+  assert.deepEqual(rejoined.chat.map((m) => [m.name, m.mine]), [['Friend', false], ['Ajit', true]], 'a phone (re)opening gets recent chat');
+  const gone = once(pc, 'remote:status');
+  secondPhone.disconnect();
+  assert.equal((await gone).phones, 1);
 
   // The computer reloads: the phone waits, then carries on with the same pairing.
   const away = once(phone, 'remote:owner');

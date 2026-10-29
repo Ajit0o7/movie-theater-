@@ -114,6 +114,15 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
     const port = httpServer.address()?.port;
     return port ? lanAddresses().map((ip) => `${tls ? 'https' : 'http'}://${ip}:${port}`) : [];
   };
+  /** A phone's view of a chat message: `mine` when its own computer's person wrote it. */
+  const forPhone = (pairing, m) => ({ id: m.id, name: m.name, text: m.text, ts: m.ts, mine: m.authorId === pairing.ownerSocketId || m.name === pairing.ownerName });
+  /** New chat messages reach the phones paired with anyone in the room. */
+  function chatToPhones(room, message) {
+    for (const p of pairings.byOwner.values()) {
+      if (p.roomId !== room.id) continue;
+      for (const id of p.phones) io.to(id).emit('remote:chat', forPhone(p, message));
+    }
+  }
   /** A computer went away (or came back): its phones show that. */
   function ownerPresence(pairing, online) {
     pairing.ownerGoneSince = online ? null : Date.now();
@@ -338,7 +347,9 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
     on('chat:send', ({ text }) => {
       if (!room) return;
       const message = addChatMessage(room, socket.id, text);
-      if (message) io.to(room.id).emit('chat:message', message);
+      if (!message) return;
+      io.to(room.id).emit('chat:message', message);
+      chatToPhones(room, message);
     });
 
     // Laser pointer: relayed, never stored. Validated and rate-limited (~50 messages/s).
@@ -385,7 +396,8 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
       if (result.error) return ack({ error: result.error });
       phoneFor = result.pairing;
       if (phoneFor.ownerSocketId) io.to(phoneFor.ownerSocketId).emit('remote:status', { phones: phoneFor.phones.size, joined: socket.id });
-      ack({ ok: true, roomId: phoneFor.roomId, name: phoneFor.ownerName, online: Boolean(phoneFor.ownerSocketId) });
+      const history = (rooms.get(phoneFor.roomId)?.chat ?? []).slice(-50).map((m) => forPhone(phoneFor, m));
+      ack({ ok: true, roomId: phoneFor.roomId, name: phoneFor.ownerName, online: Boolean(phoneFor.ownerSocketId), chat: history });
     });
 
     // Per-second budgets for a phone's messages (a scrub bar or ICE gathering never needs more).
@@ -400,6 +412,19 @@ export function createCinemaServer({ env = process.env, tls = null, ice = create
       if (!phoneFor?.ownerSocketId || !withinBudget('command', 20)) return;
       const command = sanitizeCommand(input);
       if (command) io.to(phoneFor.ownerSocketId).emit('remote:command', { ...command, from: socket.id });
+    });
+
+    // A chat message typed on the phone, posted as its computer's person (the phone isn't in the room).
+    on('remote:chat', ({ text }, ack) => {
+      if (!phoneFor) return ack({ error: 'Not paired.' });
+      if (!withinBudget('chat', 3)) return ack({ error: 'Slow down a little.' });
+      const target = rooms.get(phoneFor.roomId);
+      if (!target?.participants.has(phoneFor.ownerSocketId)) return ack({ error: `${phoneFor.ownerName}’s computer is offline, so the message can’t be sent.` });
+      const message = addChatMessage(target, phoneFor.ownerSocketId, text);
+      if (!message) return ack({ error: 'Type a message first.' });
+      io.to(target.id).emit('chat:message', message);
+      chatToPhones(target, message);
+      ack({ ok: true });
     });
 
     // Phone camera signaling (WebRTC offer/answer/candidates), only between a phone and its computer.

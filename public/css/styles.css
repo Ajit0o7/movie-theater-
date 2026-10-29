@@ -886,7 +886,7 @@ body.idle .subtitles { bottom: 6vh; }
 /* ---------- Phone remote page ---------- */
 .remote-page { min-height: 100dvh; background: var(--bg-gradient); }
 .remote {
-  display: grid; gap: 16px; max-width: 480px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 480px; margin: 0 auto;
   padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
 }
 .remote-head { display: flex; align-items: center; justify-content: space-between; }
@@ -896,7 +896,7 @@ body.idle .subtitles { bottom: 6vh; }
 .remote-link[data-tone="on"] .dot { background: var(--success-text); box-shadow: 0 0 10px var(--success-glow); }
 .remote-link[data-tone="off"] .dot { background: var(--danger); }
 .remote-card {
-  display: grid; gap: 16px; padding: 20px; border-radius: var(--radius-lg);
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 20px; border-radius: var(--radius-lg);
   background: var(--surface); border: 1px solid var(--border);
 }
 .remote-card h1 { margin: -8px 0 0; font: 800 22px/1.25 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
@@ -922,6 +922,24 @@ body.idle .subtitles { bottom: 6vh; }
   height: 56px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface-glass);
   font-size: 26px; cursor: pointer; touch-action: manipulation;
 }
+.remote-chat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.remote-chat-head h2 { margin: 0; }
+.remote-messages {
+  list-style: none; margin: 0; padding: 4px 2px; display: flex; flex-direction: column; gap: 10px;
+  max-height: 280px; min-height: 64px; overflow-y: auto; overscroll-behavior: contain;
+}
+.remote-messages:empty::before { content: 'No messages yet. Say hi!'; color: var(--text-faint); font-size: 13px; }
+.remote-composer { display: flex; gap: 8px; }
+.remote-composer input {
+  flex: 1; min-width: 0; height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--border-strong);
+  background: rgba(18, 25, 27, 0.65); color: var(--text); font: 500 16px var(--font-body); outline: none; /* 16px: no iOS zoom */
+}
+.remote-composer input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(208, 111, 76, 0.25); }
+.remote-send {
+  display: grid; place-items: center; width: 46px; height: 46px; border: 0; border-radius: 12px; color: #fff; cursor: pointer;
+  background: linear-gradient(135deg, var(--c-terracotta), var(--c-crimson));
+}
+.remote-chat-error { margin: 0; color: #fca5a5; font-size: 13px; }
 .remote-cam-preview { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; aspect-ratio: 4 / 3; }
 .remote-cam-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .remote-cam-preview video.mirrored { transform: scaleX(-1); }

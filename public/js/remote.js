@@ -3,7 +3,7 @@
 // and can make the phone their webcam. The phone is not a room participant: everything goes
 // through the computer it is paired with, which runs the commands with its own controls.
 
-import { $, formatTime, h } from './util.js';
+import { $, formatTime, h, hueFor } from './util.js';
 
 const token = new URLSearchParams(location.search).get('pair');
 const socket = io();
@@ -23,6 +23,7 @@ function fail(message) {
   $('#remote-error').hidden = false;
   $('#remote-player').hidden = true;
   $('#remote-camera').hidden = true;
+  $('#remote-chat').hidden = true;
   setStatus('Not connected', 'off');
   camera.stop({ notify: false });
 }
@@ -40,6 +41,9 @@ socket.on('connect', () => {
     owner = { online: res.online, name: res.name };
     $('#remote-player').hidden = false;
     $('#remote-camera').hidden = false;
+    $('#remote-chat').hidden = false;
+    $('#remote-chat-as').textContent = `Sent as ${res.name}`;
+    chat.load(res.chat ?? []);
     $('#remote-for').textContent = `Remote for ${res.name}’s screen`;
     render();
     send('state');
@@ -63,6 +67,7 @@ socket.on('remote:ended', () => {
   fail('The computer unpaired this phone. Scan the QR code again to reconnect.');
 });
 socket.on('remote:signal', ({ data }) => camera.onSignal(data));
+socket.on('remote:chat', (message) => chat.add(message, true));
 
 // ---- remote control ------------------------------------------------------------------
 const position = () => {
@@ -74,7 +79,7 @@ const position = () => {
 function render() {
   if (!joined) return;
   setStatus(owner.online ? `Connected to ${owner.name}` : `Waiting for ${owner.name}’s computer…`, owner.online ? 'on' : 'wait');
-  const live = Boolean(state) && !state.duration;
+  const live = Boolean(state) && state.type !== 'none' && !state.duration; // a screen share
   const can = owner.online && Boolean(state?.controllable);
   $('#remote-title').textContent = state?.title || 'Nothing playing yet';
   $('#remote-play use').setAttribute('href', state?.playing ? '#i-pause' : '#i-play');
@@ -143,6 +148,50 @@ $('#remote-reactions').addEventListener('click', (e) => {
   buzz();
   send('reaction', btn.dataset.emoji);
   btn.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 260, easing: 'ease-out' });
+});
+
+// ---- chat --------------------------------------------------------------------------------
+// The room's chat, live. What you type here is posted as the person whose screen this phone
+// is paired with (the phone itself isn't in the room).
+const chat = {
+  ids: new Set(),
+
+  load(messages) {
+    this.ids.clear();
+    $('#remote-messages').replaceChildren();
+    for (const m of messages) this.add(m, false);
+  },
+
+  add(m, live) {
+    if (!m || this.ids.has(m.id)) return;
+    this.ids.add(m.id);
+    const list = $('#remote-messages');
+    const time = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    list.append(
+      h('li', { class: `msg${m.mine ? ' mine' : ''}`, style: `--hue:${hueFor(m.name)}` }, [
+        h('div', { class: 'msg-meta' }, [h('span', { class: 'msg-name', text: m.mine ? 'You' : m.name }), h('time', { text: time })]),
+        h('p', { class: 'msg-text', text: m.text }),
+      ]),
+    );
+    while (list.children.length > 100) list.firstElementChild.remove();
+    list.scrollTop = list.scrollHeight;
+    if (live && !m.mine) buzz();
+  },
+};
+
+$('#remote-composer').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('#remote-chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  $('#remote-chat-error').hidden = true;
+  socket.emit('remote:chat', { text }, (res) => {
+    if (!res?.error) return;
+    input.value ||= text; // give it back to try again
+    $('#remote-chat-error').textContent = res.error;
+    $('#remote-chat-error').hidden = false;
+  });
 });
 
 // ---- phone as webcam -------------------------------------------------------------------

@@ -16,7 +16,7 @@ A zero-install watch-party web app, inspired by [Kosmi](https://app.kosmi.io/) b
 - **Ambilight**: the space around the picture glows with its colours. Black bars baked into the video file (a 2.39:1 film inside a 16:9 file) are detected, so the glow fills them too instead of sampling black.
 - **Touch gestures** on phones and tablets: tap for the controls, double-tap the left or right side to skip 10 s (keep tapping for more), swipe up/down for brightness (left) or volume (right), and pinch to fill the screen. Fill (`Z` on a computer) zooms past baked-in black bars.
 - **Pop-out** (`O`, Chrome and Edge): the movie, everyone's webcams and the controls move into an always-on-top window, so you can keep watching together while using other apps.
-- **Phone remote and webcam**: scan a QR code (the phone button) and your phone becomes a remote for your screen: play, pause, skip, scrub, volume and reactions. Tap *Start camera* on it and it becomes your webcam in the room. Nothing to install.
+- **Phone remote and webcam**: scan a QR code (the phone button) and your phone becomes a remote for your screen: play, pause, skip, scrub, volume and reactions, plus the room's chat, so you can read and send messages from the phone. Tap *Start camera* on it and it becomes your webcam in the room. Nothing to install.
 
 ## Quick start
 
