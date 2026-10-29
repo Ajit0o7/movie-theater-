@@ -524,6 +524,16 @@ body.idle .cam-tools { opacity: 0 !important; }
 }
 .cam-tile video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .cam-tile video.mirrored { transform: scaleX(-1); }
+/* The picture stopped arriving: say so instead of showing a face frozen mid-word. */
+.cam-stalled {
+  position: absolute; inset: 0; display: none; place-content: center; justify-items: center; gap: 6px;
+  background: rgba(16, 22, 24, 0.5); color: var(--text); font-size: 12px; font-weight: 600; text-align: center;
+  pointer-events: none;
+}
+.cam-stalled .icon { width: 22px; height: 22px; color: var(--accent-2); }
+.cam-tile.stalled .cam-stalled { display: grid; }
+.cam-tile.stalled video { filter: grayscale(0.7) brightness(0.65); }
+.cam-tile.size-s .cam-stalled span { display: none; }
 
 .cam-avatar {
   position: absolute; inset: 0; display: none; place-items: center;

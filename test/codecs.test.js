@@ -63,3 +63,17 @@ test('mesh budget: full quality for 1–2 viewers, shared upload and lower resol
   const total = (five.movieBitrate + five.cameraBitrate) * 5;
   assert.ok(total <= 13_000_000, `now about ${(total / 1e6).toFixed(1)} Mbps`);
 });
+
+test('a squeezed webcam steps down in resolution before it freezes, and climbs back with headroom', async () => {
+  const { cameraHeightFor, cameraStepDown } = await import('../public/js/rtc.js');
+  assert.equal(cameraHeightFor(1_000_000, 720), 720);
+  assert.equal(cameraHeightFor(500_000, 720), 480);
+  assert.equal(cameraHeightFor(250_000, 720), 360);
+  assert.equal(cameraHeightFor(90_000, 720), 240, 'starved: a tiny picture keeps moving');
+  assert.equal(cameraHeightFor(1_000_000, 480), 480, 'never above the room budget');
+  // Back up only with 30% headroom over the step's need (700 kbps for 720p), so it doesn't flap.
+  assert.equal(cameraHeightFor(750_000, 720, 480), 480);
+  assert.equal(cameraHeightFor(950_000, 720, 480), 720);
+  assert.equal(cameraHeightFor(undefined, 720, 360), 360, 'no stat in this browser: leave it');
+  assert.deepEqual([720, 480, 360, 240].map(cameraStepDown), [480, 360, 240, 240]);
+});

@@ -118,6 +118,7 @@ export class DraggableCamera {
 
 const STACK_GAP = 12;
 const STACK_MARGIN = 16;
+const STALL_MS = 2500; // no new frame for this long: the camera is stuck, say so
 
 /** Stacks an untouched tile up the right edge by slot, wrapping into columns on short screens. */
 function stackAuto(tile) {
@@ -147,6 +148,30 @@ export class CameraDeck {
     window.addEventListener('resize', () => {
       for (const tile of this.tiles.values()) tile.drag.reflow();
     });
+    // A hidden tab paints no frames: don't call every camera stalled on the way back.
+    document.addEventListener('visibilitychange', () => {
+      for (const tile of this.tiles.values()) tile.lastFrame = performance.now();
+    });
+    this.stallTimer = setInterval(() => this.#checkStalls(), 1000);
+  }
+
+  /**
+   * A camera whose frames stop arriving (a squeezed or lossy connection) used to sit frozen on
+   * its last frame, looking like the person froze. Now the tile says so, and a video the
+   * browser paused (iOS does this, e.g. after a fullscreen video) is started again.
+   */
+  #checkStalls() {
+    if (document.hidden || !('requestVideoFrameCallback' in HTMLVideoElement.prototype)) return;
+    const now = performance.now();
+    for (const tile of this.tiles.values()) {
+      const { el, video } = tile;
+      const live = Boolean(video.srcObject?.getVideoTracks().some((t) => t.readyState === 'live'));
+      const showing = live && !el.classList.contains('cam-off') && tile.layout.size !== 'min';
+      if (showing && video.paused) video.play().catch(() => {});
+      const stalled = showing && now - tile.lastFrame > STALL_MS;
+      el.classList.toggle('stalled', stalled);
+      if (stalled) tile.stallText.textContent = tile.framed ? 'Weak connection' : 'Connecting video…';
+    }
   }
 
   /** Everyone's tile, for the pop-out window: { key, name, isSelf, stream, camera }. */
@@ -223,6 +248,8 @@ export class CameraDeck {
     }
 
     const avatar = h('div', { class: 'cam-avatar' });
+    const stallText = h('span');
+    const stall = h('div', { class: 'cam-stalled', 'aria-hidden': 'true' }, [icon('signal'), stallText]);
     const label = h('span', { class: 'cam-name' });
     const micIcon = h('span', { class: 'cam-mic-off', title: 'Muted' }, [icon('mic-off')]);
     const sizeButtons = SIZES.map((size) =>
@@ -233,6 +260,7 @@ export class CameraDeck {
     const el = h('div', { class: 'cam-tile size-m cam-off', dataset: { key } }, [
       video,
       avatar,
+      stall,
       h('div', { class: 'cam-label' }, [label, micIcon]),
       tools,
     ]);
@@ -241,6 +269,9 @@ export class CameraDeck {
       key,
       el,
       video,
+      stallText,
+      lastFrame: performance.now(),
+      framed: false, // a frame has shown since the stream was set
       isSelf,
       name,
       layout: { ...DEFAULT_LAYOUT },
@@ -253,7 +284,11 @@ export class CameraDeck {
         el.style.setProperty('--hue', hueFor(n));
       },
       setStream: (stream) => {
-        if (video.srcObject !== stream) video.srcObject = stream;
+        if (video.srcObject !== stream) {
+          video.srcObject = stream;
+          tile.framed = false;
+          tile.lastFrame = performance.now(); // a few seconds' grace to connect
+        }
         if (stream) video.play().catch(() => {});
       },
       setStatus: ({ camera, mic }) => {
@@ -315,6 +350,16 @@ export class CameraDeck {
       if (e.target.closest('.cam-tools')) return;
       if (tile.layout.size === 'min' && !tile.drag.moved) tile.setSize('m');
     });
+
+    // Every painted frame: how the stall check knows the picture is still moving.
+    if (video.requestVideoFrameCallback) {
+      const onFrame = () => {
+        tile.lastFrame = performance.now();
+        tile.framed = true;
+        video.requestVideoFrameCallback(onFrame);
+      };
+      video.requestVideoFrameCallback(onFrame);
+    }
 
     tile.setName(name);
     return tile;

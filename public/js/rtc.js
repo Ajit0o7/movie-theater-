@@ -92,10 +92,47 @@ export function meshBudget(preset, viewers) {
 }
 
 /** Scale factor that brings a track down to `maxHeight` (never up). */
-function downscale(track, maxHeight) {
-  const height = track.getSettings?.().height;
+function downscale(track, maxHeight, knownHeight = 0) {
+  const height = track.getSettings?.().height || knownHeight; // a forwarded (phone) track may not say
   return height && height > maxHeight ? height / maxHeight : 1;
 }
+
+/**
+ * Camera resolution steps and the bitrate each needs to keep moving. A webcam squeezed to
+ * ~150 kbps while still encoding 720p freezes: every lost keyframe is so large it takes seconds
+ * to resend. A smaller picture at the same bitrate keeps the face moving.
+ */
+export const CAMERA_STEPS = [
+  [720, 700_000],
+  [480, 400_000],
+  [360, 200_000],
+  [240, 0],
+];
+
+/**
+ * Pure: the camera height a connection that gives the camera `bitrate` (bps) can carry, never
+ * above `maxHeight`. Going back up needs 30% headroom over that step's need, so it doesn't flap.
+ * Unknown bitrate (a browser without the stat): keep `current`.
+ */
+export function cameraHeightFor(bitrate, maxHeight, current = maxHeight) {
+  if (!(bitrate > 0)) return current;
+  for (const [height, needs] of CAMERA_STEPS) {
+    if (height > maxHeight) continue;
+    if (bitrate >= (height > current ? needs * 1.3 : needs)) return height;
+  }
+  return 240;
+}
+
+/** Pure: the step below `height` (for a camera encoder short of CPU). */
+export function cameraStepDown(height) {
+  return CAMERA_STEPS.map(([h]) => h).find((h) => h < height) ?? 240;
+}
+
+const CAMERA_GUARD_MS = 3000;
+const CPU_HOLD_MS = 30_000; // after stepping down for CPU, don't climb back for this long
+const cameraCaps = new WeakMap(); // camera sender -> height the guard allows for that connection
+const cameraHolds = new WeakMap(); // camera sender -> time before which it may not go up
+const sourceHeights = new WeakMap(); // camera sender -> the track's real height, when it doesn't say
 
 // getParameters()/setParameters() is a transaction: two overlapping calls on one sender make
 // the second fail. Calls are queued per sender so they never overlap.
@@ -155,8 +192,14 @@ async function setSenderParams(sender, slot, preset, codecOrder, viewers) {
       } else if (slot === 'camVideo') {
         enc.maxBitrate = budget.cameraBitrate;
         if (variant !== 'minimal') {
-          enc.priority = 'low';
-          enc.scaleResolutionDownBy = downscale(sender.track, budget.cameraHeight);
+          // Below the movie, but not 'low': on a tight connection a low-priority camera was
+          // starved to a frozen frame. Faces keep moving: drop resolution, never frame rate.
+          enc.priority = 'medium';
+          enc.networkPriority = 'medium';
+          enc.maxFramerate = 30;
+          const cap = Math.min(budget.cameraHeight, cameraCaps.get(sender) ?? Infinity);
+          enc.scaleResolutionDownBy = downscale(sender.track, cap, sourceHeights.get(sender));
+          params.degradationPreference = 'maintain-framerate';
         }
       } else if (slot === 'micAudio') {
         enc.maxBitrate = VOICE_AUDIO_BITRATE;
@@ -202,6 +245,46 @@ export class PeerManager extends EventTarget {
 
     this.onSignal = ({ from, data }) => this.#handleSignal(from, data);
     socket.on('signal', this.onSignal);
+    this.cameraGuard = setInterval(() => this.#guardCameras(), CAMERA_GUARD_MS);
+  }
+
+  /**
+   * Keeps each outgoing webcam at a resolution its connection can carry: every few seconds,
+   * reads how much bitrate the browser actually gives the camera on that connection (it shares
+   * the link with the movie) and steps 720p → 480p → 360p → 240p before the picture freezes.
+   * An encoder short of CPU (a laptop also decoding a 4K movie) steps down too. Climbs back
+   * when there's room.
+   */
+  async #guardCameras() {
+    const budget = meshBudget(this.moviePreset, this.peers.size);
+    for (const peer of this.peers.values()) {
+      const sender = peer.senders.camVideo;
+      if (!sender?.track || peer.pc.connectionState !== 'connected') continue;
+      let out = null;
+      try {
+        (await sender.getStats()).forEach((s) => {
+          if (s.type === 'outbound-rtp' && s.kind === 'video') out = s;
+        });
+      } catch {
+        continue;
+      }
+      if (!out) continue;
+      // A forwarded phone camera doesn't report its size: learn it from what's sent unscaled.
+      if (!sender.track.getSettings?.().height && out.frameHeight && !cameraCaps.has(sender)) {
+        sourceHeights.set(sender, Math.max(sourceHeights.get(sender) ?? 0, out.frameHeight));
+      }
+      const current = Math.min(cameraCaps.get(sender) ?? budget.cameraHeight, budget.cameraHeight);
+      let next = cameraHeightFor(out.targetBitrate, budget.cameraHeight, current);
+      const now = performance.now();
+      if (out.qualityLimitationReason === 'cpu') {
+        next = Math.min(next, cameraStepDown(current));
+        cameraHolds.set(sender, now + CPU_HOLD_MS);
+      }
+      if (next > current && now < (cameraHolds.get(sender) ?? 0)) next = current;
+      if (next === current) continue;
+      cameraCaps.set(sender, next);
+      applySenderParams(sender, 'camVideo', this.moviePreset, this.codecOrder, this.peers.size);
+    }
   }
 
   get cameraStreamId() {
@@ -359,6 +442,7 @@ export class PeerManager extends EventTarget {
   }
 
   destroy() {
+    clearInterval(this.cameraGuard);
     this.socket.off('signal', this.onSignal);
     for (const id of [...this.peers.keys()]) this.removePeer(id);
   }
