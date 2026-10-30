@@ -425,6 +425,26 @@ async function joinRoom() {
   subtitles.applyState(res.subtitles, { quiet: true });
   moments.set(res.moments);
   renderPeople();
+
+  // Auto-load YouTube trailer if provided in URL (?yt=... or ?trailer=1) and room is empty
+  if (!joinedOnce && res.playback?.source?.type === 'none') {
+    const params = new URLSearchParams(window.location.search);
+    let ytId = params.get('yt') || params.get('v');
+    if (params.has('trailer') && !ytId) ytId = 'BjJcYdEOI0k';
+    if (ytId) {
+      const fullUrl = ytId.includes('/') ? ytId : ('https://www.youtube.com/watch?v=' + ytId);
+      const parsed = parseYouTubeUrl(fullUrl);
+      if (parsed) {
+        setSource({
+          type: 'youtube',
+          id: newSourceId(),
+          videoId: parsed.videoId,
+          name: params.get('title') || 'The Notebook (Trailer)'
+        }).catch(console.error);
+      }
+    }
+  }
+
   return true;
 }
 

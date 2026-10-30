@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TikTok Video Creator · 4K Virtual Cinema</title>
+  <meta name="theme-color" content="#141c1e">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..800&family=Outfit:wght@500;600;700;800;900&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+  <style>
+    :root {
+      --phone-w: 390px;
+      --phone-h: 844px;
+    }
+    body.promo-body {
+      background: #0d1214;
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      margin: 0;
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      overflow-x: hidden;
+    }
+
+    /* Left Control Sidebar */
+    .promo-sidebar {
+      width: 380px;
+      flex-shrink: 0;
+      background: var(--surface-strong);
+      border-right: 1px solid var(--border-strong);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+      z-index: 100;
+      box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
+    }
+    .promo-sidebar h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .promo-sidebar h1 span {
+      background: linear-gradient(135deg, var(--c-terracotta), var(--c-peach));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .promo-sidebar p.desc {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-dim);
+    }
+
+    .sidebar-section {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .sidebar-section h3 {
+      margin: 0;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-2);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .record-btn {
+      height: 48px;
+      background: linear-gradient(135deg, #e11d48, #be123c);
+      color: #fff;
+      font-weight: 800;
+      border: 0;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(225, 29, 72, 0.4);
+      transition: all 180ms ease;
+    }
+    .record-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(225, 29, 72, 0.6);
+    }
+    .record-btn.recording {
+      background: #475569;
+      animation: pulse-rec 1s infinite alternate;
+    }
+    @keyframes pulse-rec {
+      from { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); }
+      to { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); }
+    }
+
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .action-btn {
+      padding: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 150ms;
+    }
+    .action-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .action-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    /* Main Stage Preview Area */
+    .promo-stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 30px 20px;
+      position: relative;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 30%, #1f2b2e 0%, #0d1214 70%);
+    }
+
+    /* 9:16 Phone Mockup Container */
+    .phone-mockup {
+      width: var(--phone-w);
+      height: var(--phone-h);
+      max-height: 90vh;
+      aspect-ratio: 9 / 19.5;
+      background: #000;
+      border-radius: 46px;
+      box-shadow: 0 25px 70px rgba(0, 0, 0, 0.8), 0 0 0 10px #1e2628, 0 0 0 12px rgba(236, 172, 142, 0.2);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* Fullscreen mode (no bezel) for direct high-res capture */
+    body.capture-mode .promo-sidebar { display: none; }
+    body.capture-mode .promo-stage { padding: 0; background: #000; }
+    body.capture-mode .phone-mockup {
+      width: 100vw;
+      height: 100vh;
+      max-height: none;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    /* Phone Speaker Notch / Dynamic Island */
+    .phone-notch {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 110px;
+      height: 28px;
+      background: #000;
+      border-radius: 20px;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 12px;
+    }
+    .notch-camera {
+      width: 10px;
+      height: 10px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 50%;
+    }
+
+    /* TikTok Overlay Header & Text Stickers */
+    .tiktok-overlay {
+      position: absolute;
+      top: 50px;
+      left: 16px;
+      right: 16px;
+      z-index: 40;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .tt-sticker {
+      background: #fff;
+      color: #000;
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 900;
+      font-size: 15px;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      border-radius: 8px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6);
+      text-align: center;
+      line-height: 1.25;
+      animation: sticker-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .tt-sticker.accent {
+      background: #000;
+      color: #fff;
+      border: 2px solid #fff;
+    }
+    .tt-sticker.secondary {
+      background: var(--c-terracotta);
+      color: #FAF2EC;
+      font-size: 13px;
+      font-weight: 800;
+      border-radius: 20px;
+      padding: 6px 14px;
+    }
+    @keyframes sticker-pop {
+      from { transform: scale(0.85); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    /* TikTok Right-side Floating Action Column */
+    .tiktok-right-actions {
+      position: absolute;
+      right: 12px;
+      bottom: 120px;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      pointer-events: auto;
+    }
+    .tt-action {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+    }
+    .tt-action-icon {
+      width: 44px;
+      height: 44px;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(8px);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      transition: transform 150ms;
+    }
+    .tt-action:hover .tt-action-icon {
+      transform: scale(1.1);
+    }
+
+    /* The Cinema Inside the Phone */
+    .cinema-viewport {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      background: #000;
+    }
+
+    .yt-frame-container {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      position: relative;
+      background: #000;
+      box-shadow: 0 0 50px 15px rgba(208, 111, 76, 0.35);
+    }
+    .yt-frame-container iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    /* Floating Couple Webcams inside the theater */
+    .couple-cams {
+      position: absolute;
+      top: 140px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 35;
+    }
+    .mock-tile {
+      width: 105px;
+      height: 135px;
+      border-radius: 18px;
+      background: #182225;
+      border: 2px solid rgba(236, 172, 142, 0.3);
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7);
+      pointer-events: auto;
+      transition: all 250ms ease;
+    }
+    .mock-tile.speaking {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent), 0 0 20px rgba(208, 111, 76, 0.7);
+    }
+    .mock-tile img, .mock-tile video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .mock-tile-badge {
+      position: absolute;
+      bottom: 6px;
+      left: 6px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(6px);
+      font-size: 10px;
+      font-weight: 700;
+      color: #FAF2EC;
+    }
+    .mock-tile-pulse {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+    }
+
+    /* Floating Danmaku Chat */
+    .promo-danmaku {
+      position: absolute;
+      top: 290px;
+      left: 0;
+      right: 0;
+      height: 80px;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 38;
+    }
+    .danmaku-bubble {
+      position: absolute;
+      right: -300px;
+      padding: 6px 14px;
+      border-radius: 14px;
+      background: rgba(22, 30, 33, 0.9);
+      border: 1px solid var(--accent-2);
+      color: #FAF2EC;
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6);
+      animation: fly-across 6s linear forwards;
+    }
+    @keyframes fly-across {
+      from { transform: translateX(0); }
+      to { transform: translateX(-550px); }
+    }
+
+    /* Flying Hearts Generator */
+    .heart-float {
+      position: absolute;
+      bottom: 120px;
+      right: 30px;
+      font-size: 26px;
+      pointer-events: none;
+      animation: float-up 2s ease-out forwards;
+      z-index: 45;
+    }
+    @keyframes float-up {
+      0% { transform: translateY(0) scale(0.6) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(-350px) scale(1.3) rotate(20deg); opacity: 0; }
+    }
+
+    /* Sound Mixer Showcase Popup */
+    .promo-mixer-modal {
+      position: absolute;
+      bottom: 110px;
+      left: 16px;
+      right: 16px;
+      background: var(--surface-strong);
+      border: 1px solid var(--accent);
+      border-radius: 20px;
+      padding: 16px;
+      z-index: 42;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 15px 40px rgba(0,0,0,0.8), 0 0 30px rgba(208, 111, 76, 0.3);
+      display: grid;
+      gap: 12px;
+      animation: slide-up 0.3s ease;
+    }
+    @keyframes slide-up {
+      from { transform: translateY(50px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .promo-mixer-title {
+      font-size: 14px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text);
+    }
+    .promo-mixer-tag {
+      font-size: 10px;
+      background: var(--c-terracotta);
+      padding: 2px 8px;
+      border-radius: 10px;
+      color: #fff;
+    }
+
+    /* Bottom TikTok Sound Bar */
+    .tt-bottom-sound {
+      position: absolute;
+      bottom: 18px;
+      left: 16px;
+      right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      z-index: 40;
+    }
+    .tt-sound-disc {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #111;
+      border: 4px solid #333;
+      display: grid;
+      place-items: center;
+      animation: spin 3s linear infinite;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Custom Input fields */
+    .code-input {
+      width: 100%;
+      height: 38px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: rgba(18, 25, 27, 0.8);
+      color: var(--text);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body class="promo-body">
+
+  <!-- Left Control Panel -->
+  <aside class="promo-sidebar">
+    <div>
+      <h1>🎬 <span>TikTok Promo Maker</span></h1>
+      <p class="desc">Create viral 9:16 videos like Mikey & Hannah's <em>"We finally did it"</em> watch party video.</p>
+    </div>
+
+    <!-- 1-Click Viral Sequence -->
+    <div class="sidebar-section">
+      <h3>🚀 Viral Auto-Director</h3>
+      <button class="record-btn" id="auto-demo-btn">
+        <span>✨ Run 20s TikTok Demo</span>
+      </button>
+      <p style="margin:0; font-size:11px; color:var(--text-dim);">Auto-plays the trailer, bursts heart reactions, cycles webcam speaking states, and showcases the dual volume mixer.</p>
+    </div>
+
+    <!-- Recording Tool -->
+    <div class="sidebar-section">
+      <h3>🔴 Video Recording</h3>
+      <button class="record-btn" id="record-btn" style="background: linear-gradient(135deg, #10b981, #059669);">
+        <span>⏺️ Start Recording Screen</span>
+      </button>
+      <div class="action-grid">
+        <button class="action-btn" id="toggle-fullscreen-btn">📱 Toggle Frame Mode</button>
+        <button class="action-btn" id="webcam-btn">📷 Use My Real Cam</button>
+      </div>
+    </div>
+
+    <!-- YouTube Trailer Switcher -->
+    <div class="sidebar-section">
+      <h3>🍿 Movie Trailer (YouTube)</h3>
+      <input type="text" id="yt-input" class="code-input" value="https://www.youtube.com/watch?v=BjJcYdEOI0k" placeholder="Paste YouTube trailer URL or ID">
+      <div class="action-grid">
+        <button class="action-btn" id="load-yt-btn">▶️ Load Trailer</button>
+        <button class="action-btn" id="play-pause-btn">⏯️ Play / Pause</button>
+      </div>
+    </div>
+
+    <!-- Real-time Interaction Triggers -->
+    <div class="sidebar-section">
+      <h3>⚡ Trigger Animations</h3>
+      <div class="action-grid">
+        <button class="action-btn" id="trigger-mixer-btn">🎛️ Toggle Mixer</button>
+        <button class="action-btn" id="trigger-hearts-btn">❤️ Burst Reactions</button>
+        <button class="action-btn" id="trigger-chat-btn">💬 Float Chat</button>
+        <button class="action-btn" id="trigger-speak-btn">🗣️ Speaking Glow</button>
+      </div>
+    </div>
+
+    <!-- Live Theater Link -->
+    <div class="sidebar-section">
+      <h3>🎬 Live Theater</h3>
+      <button class="action-btn" id="open-real-room-btn" style="width:100%; height:42px; background:var(--accent);">
+        <span>🍿 Open in Real Theater Room</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Right Preview Canvas (9:16 Phone Mockup) -->
+  <main class="promo-stage" id="promo-stage">
+    
+    <div class="phone-mockup" id="phone-mockup">
+      <!-- Phone Notch / Camera -->
+      <div class="phone-notch">
+        <div class="notch-camera"></div>
+      </div>
+
+      <!-- Viral TikTok Text Stickers -->
+      <div class="tiktok-overlay" id="tiktok-overlay">
+        <div class="tt-sticker" id="main-sticker">Long distance couples... we finally did it 😭🍿</div>
+        <div class="tt-sticker secondary" id="sub-sticker">FaceTime + 4K Movie + Dual Sound Mixer ✨</div>
+      </div>
+
+      <!-- Couple Webcam Tiles Floating in Room -->
+      <div class="couple-cams">
+        <!-- Self Tile (Ajit) -->
+        <div class="mock-tile speaking" id="tile-ajit">
+          <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80" id="ajit-img" alt="Ajit">
+          <video id="real-webcam-preview" autoplay playsinline muted style="display:none; width:100%; height:100%; object-fit:cover;"></video>
+          <div class="mock-tile-badge">Ajit (you)</div>
+          <div class="mock-tile-pulse"></div>
+        </div>
+
+        <!-- Partner Tile (Hannah) -->
+        <div class="mock-tile" id="tile-hannah">
+          <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80" alt="Hannah">
+          <div class="mock-tile-badge">Hannah 💖</div>
+          <div class="mock-tile-pulse"></div>
+        </div>
+      </div>
+
+      <!-- Floating Danmaku Chat Container -->
+      <div class="promo-danmaku" id="promo-danmaku"></div>
+
+      <!-- Sound Mixer Demonstration Overlay -->
+      <div class="promo-mixer-modal" id="promo-mixer" style="display:none;">
+        <div class="promo-mixer-title">
+          <span>🎧 Dual Sound Mixer</span>
+          <span class="promo-mixer-tag">Independent Audio</span>
+        </div>
+        <div style="font-size:12px; display:grid; gap:8px;">
+          <div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span>🎬 Movie Volume</span>
+              <strong style="color:var(--accent);">100% (Stereo 510kbps)</strong>
+            </div>
+            <input type="range" min="0" max="100" value="100" style="width:100%; accent-color:var(--accent);">
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span>🎙️ Partner Voices</span>
+              <strong style="color:var(--accent-2);">100% (Echo Filtered)</strong>
+            </div>
+            <input type="range" min="0" max="100" value="100" style="width:100%; accent-color:var(--accent-2);">
+          </div>
+        </div>
+      </div>
+
+      <!-- Theater Center Screen (The Notebook Trailer) -->
+      <div class="cinema-viewport">
+        <div class="yt-frame-container" id="yt-container">
+          <iframe id="yt-player" 
+                  src="https://www.youtube-nocookie.com/embed/BjJcYdEOI0k?enablejsapi=1&autoplay=1&mute=0&controls=0&loop=1&playlist=BjJcYdEOI0k" 
+                  allow="autoplay; encrypted-media" 
+                  allowfullscreen>
+          </iframe>
+        </div>
+      </div>
+
+      <!-- TikTok Right Sidebar Icons -->
+      <div class="tiktok-right-actions">
+        <div class="tt-action" id="heart-action">
+          <div class="tt-action-icon">❤️</div>
+          <span>128.4K</span>
+        </div>
+        <div class="tt-action">
+          <div class="tt-action-icon">💬</div>
+          <span>1,842</span>
+        </div>
+        <div class="tt-action">
+          <div class="tt-action-icon">🔖</div>
+          <span>34.2K</span>
+        </div>
+        <div class="tt-action">
+          <div class="tt-action-icon">↗️</div>
+          <span>Share</span>
+        </div>
+      </div>
+
+      <!-- TikTok Sound Footer -->
+      <div class="tt-bottom-sound">
+        <div class="tt-sound-disc">🎵</div>
+        <div>
+          <div style="font-weight:700;">@moviecinema · Original Audio</div>
+          <div style="font-size:10px; opacity:0.8;">Evergreen - Richy Mitch & the Coal Miners</div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    // State & Selectors
+    const phone = document.getElementById('phone-mockup');
+    const mixer = document.getElementById('promo-mixer');
+    const danmaku = document.getElementById('promo-danmaku');
+    const ytIframe = document.getElementById('yt-player');
+    const tileAjit = document.getElementById('tile-ajit');
+    const tileHannah = document.getElementById('tile-hannah');
+    const realCamPreview = document.getElementById('real-webcam-preview');
+    const ajitImg = document.getElementById('ajit-img');
+
+    // 1. YouTube Trailer Handler
+    function getYouTubeId(url) {
+      const m = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+      return m ? m[1] : url.trim();
+    }
+
+    document.getElementById('load-yt-btn').addEventListener('click', () => {
+      const val = document.getElementById('yt-input').value;
+      const id = getYouTubeId(val);
+      if (id) {
+        ytIframe.src = `https://www.youtube-nocookie.com/embed/${id}?enablejsapi=1&autoplay=1&mute=0&controls=0&loop=1&playlist=${id}`;
+      }
+    });
+
+    // 2. Flying Heart Reactions
+    function spawnHeart(emoji = '❤️') {
+      const h = document.createElement('div');
+      h.className = 'heart-float';
+      h.textContent = emoji;
+      h.style.left = (Math.random() * 80 + 260) + 'px';
+      phone.appendChild(h);
+      setTimeout(() => h.remove(), 2000);
+    }
+    document.getElementById('trigger-hearts-btn').addEventListener('click', () => {
+      for (let i = 0; i < 6; i++) {
+        setTimeout(() => spawnHeart(['❤️', '🍿', '🔥', '🥹'][Math.floor(Math.random() * 4)]), i * 180);
+      }
+    });
+    document.getElementById('heart-action').addEventListener('click', () => {
+      for (let i = 0; i < 5; i++) setTimeout(() => spawnHeart('❤️'), i * 150);
+    });
+
+    // 3. Floating Danmaku Chat
+    const coupleMessages = [
+      "Can you hear the movie? 🎬",
+      "YES it's so loud and clear!! 😭❤️",
+      "The Notebook is our favorite 🥹",
+      "Best date night ever!! 🍿✨"
+    ];
+    let msgIdx = 0;
+    function spawnChat(text) {
+      const bubble = document.createElement('div');
+      bubble.className = 'danmaku-bubble';
+      bubble.textContent = text || coupleMessages[msgIdx % coupleMessages.length];
+      msgIdx++;
+      danmaku.appendChild(bubble);
+      setTimeout(() => bubble.remove(), 6000);
+    }
+    document.getElementById('trigger-chat-btn').addEventListener('click', () => spawnChat());
+
+    // 4. Toggle Sound Mixer
+    document.getElementById('trigger-mixer-btn').addEventListener('click', () => {
+      mixer.style.display = mixer.style.display === 'none' ? 'grid' : 'none';
+    });
+
+    // 5. Alternate Speaking Pulse
+    let speakingTimer = null;
+    function toggleSpeaking() {
+      const ajitSpeaking = tileAjit.classList.contains('speaking');
+      tileAjit.classList.toggle('speaking', !ajitSpeaking);
+      tileHannah.classList.toggle('speaking', ajitSpeaking);
+    }
+    document.getElementById('trigger-speak-btn').addEventListener('click', toggleSpeaking);
+
+    // 6. Webcam Toggle
+    let camStream = null;
+    document.getElementById('webcam-btn').addEventListener('click', async () => {
+      try {
+        if (!camStream) {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          realCamPreview.srcObject = camStream;
+          realCamPreview.style.display = 'block';
+          ajitImg.style.display = 'none';
+          document.getElementById('webcam-btn').textContent = '❌ Stop Real Cam';
+        } else {
+          camStream.getTracks().forEach(t => t.stop());
+          camStream = null;
+          realCamPreview.style.display = 'none';
+          ajitImg.style.display = 'block';
+          document.getElementById('webcam-btn').textContent = '📷 Use My Real Cam';
+        }
+      } catch (e) {
+        alert('Webcam access error: ' + e.message);
+      }
+    });
+
+    // 7. Toggle Frame Mode (for ultra-clean fullscreen capture)
+    document.getElementById('toggle-fullscreen-btn').addEventListener('click', () => {
+      document.body.classList.toggle('capture-mode');
+    });
+
+    // 8. Auto-Director 20s TikTok Demo Choreography
+    document.getElementById('auto-demo-btn').addEventListener('click', () => {
+      const mainSticker = document.getElementById('main-sticker');
+      const subSticker = document.getElementById('sub-sticker');
+      
+      // Step 0s: Start hook
+      mainSticker.textContent = "Long distance couples... stop scrolling 😭🎬";
+      subSticker.textContent = "We finally found a way to watch movies together!";
+      tileAjit.classList.add('speaking');
+      tileHannah.classList.remove('speaking');
+      mixer.style.display = 'none';
+
+      // Step 3s: Partner speaks
+      setTimeout(() => {
+        tileAjit.classList.remove('speaking');
+        tileHannah.classList.add('speaking');
+        spawnChat("Can you hear me AND the movie? 🎬");
+      }, 3000);
+
+      // Step 6s: Show Sound Mixer
+      setTimeout(() => {
+        mainSticker.textContent = "SEPARATE SOUND MIXER 🎧";
+        subSticker.textContent = "Movie 100% stereo + Voices 100% (NO echo mutes)";
+        mixer.style.display = 'grid';
+        spawnChat("YES it's completely loud & clear!! 😭❤️");
+      }, 6000);
+
+      // Step 10s: Close mixer, trigger floating reactions
+      setTimeout(() => {
+        mixer.style.display = 'none';
+        mainSticker.textContent = "100% IN-SYNC 4K THEATER 🍿";
+        subSticker.textContent = "Floating webcams + real-time playback ✨";
+        for (let i = 0; i < 8; i++) {
+          setTimeout(() => spawnHeart(['❤️', '🍿', '🔥', '🥹'][i % 4]), i * 200);
+        }
+      }, 11000);
+
+      // Step 16s: Call to action
+      setTimeout(() => {
+        mainSticker.textContent = "DATE NIGHT IS SAVED 🥹❤️";
+        subSticker.textContent = "Link in bio to try it free with your partner!";
+        spawnChat("I love this movie so much 🥹❤️");
+      }, 16000);
+    });
+
+    // 9. Real Screen Recorder
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    const recordBtn = document.getElementById('record-btn');
+
+    recordBtn.addEventListener('click', async () => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        recordBtn.innerHTML = '<span>⏺️ Start Recording Screen</span>';
+        recordBtn.classList.remove('recording');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { displaySurface: "browser" },
+          audio: true
+        });
+
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `tiktok-movie-cinema-${Date.now()}.webm`;
+          a.click();
+          stream.getTracks().forEach(t => t.stop());
+        };
+
+        mediaRecorder.start();
+        recordBtn.innerHTML = '<span>⏹️ Stop & Save Video</span>';
+        recordBtn.classList.add('recording');
+      } catch (err) {
+        alert('Screen recording was cancelled or not supported: ' + err.message);
+      }
+    });
+
+    // 10. Open in Real Cinema Room
+    document.getElementById('open-real-room-btn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/rooms', { method: 'POST' });
+        const data = await res.json();
+        const trailerId = getYouTubeId(document.getElementById('yt-input').value) || 'BjJcYdEOI0k';
+        window.open(`${data.url}?yt=${trailerId}&title=The+Notebook+(Trailer)`, '_blank');
+      } catch (e) {
+        window.open('/?trailer=1', '_blank');
+      }
+    });
+  </script>
+</body>
+</html>
